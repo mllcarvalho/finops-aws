@@ -632,7 +632,7 @@ class AWSCostExtractor:
             # Adicionar dados para cada um dos top 10 serviços desta conta
             for service_key in account['top_10_service_keys']:
                 account_summary_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
-                account_summary_data[f'%'] = account['service_total_percentages'][service_key]
+                account_summary_data[f'{service_key} %'] = account['service_total_percentages'][service_key]
             
             # Criar DataFrame de resumo para esta conta
             summary_df = pd.DataFrame([account_summary_data])
@@ -830,7 +830,7 @@ class AWSCostExtractor:
             for col_idx, col_name in enumerate(df.columns, 1):
                 if ' (USD)' in col_name:
                     worksheet.cell(row=row, column=col_idx).number_format = '$#,##0.00'
-                elif col_name == '%':
+                elif '% ' in col_name or col_name.endswith(' %'):
                     percent_cell = worksheet.cell(row=row, column=col_idx)
                     percent_cell.number_format = '0.00%'
                     
@@ -1129,545 +1129,545 @@ class AWSCostExtractor:
         timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
         
         # Combinar tudo em um HTML
-            html_content = f"""<!DOCTYPE html>
-        <html lang="pt-br">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Relatório de Custos AWS</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 20px;
-                    color: #333;
-                }}
-                h1, h2, h3 {{
-                    color: #0066cc;
-                }}
-                .container {{
-                    max-width: 1200px;
-                    margin: 0 auto;
-                }}
-                table {{
-                    border-collapse: collapse;
-                    width: 100%;
-                    margin-bottom: 30px;
-                    font-size: 14px;
-                }}
-                th, td {{
-                    text-align: left;
-                    padding: 10px;
-                    border: 1px solid #ddd;
-                }}
-                th {{
-                    background-color: #0066cc;
-                    color: white;
-                    position: sticky;
-                    top: 0;
-                    z-index: 10;
-                    cursor: pointer;
-                }}
-                th.sortable:hover {{
-                    background-color: #0055aa;
-                }}
-                th.sortable:after {{
-                    content: "\\00a0\\00a0\\00a0"; /* Espaço para o ícone de ordenação */
-                }}
-                th.sort-asc:after {{
-                    content: "\\2191"; /* Seta para cima */
-                }}
-                th.sort-desc:after {{
-                    content: "\\2193"; /* Seta para baixo */
-                }}
-                tr:nth-child(even) {{
-                    background-color: #f5f5f5;
-                }}
-                tr:hover {{
-                    background-color: #e9f1fa;
-                }}
-                .high-percentage {{
-                    background-color: #FFEB9C;
-                }}
-                .timestamp {{
-                    font-size: 0.8em;
-                    color: #666;
-                    margin-bottom: 20px;
-                }}
-                .summary {{
-                    background-color: #f0f7ff;
-                    padding: 15px;
-                    border-radius: 5px;
-                    margin-bottom: 20px;
-                }}
-                .tabs {{
-                    display: flex;
-                    margin-bottom: 20px;
-                    border-bottom: 1px solid #ccc;
-                }}
-                .tab {{
-                    padding: 10px 20px;
-                    background-color: #ddd;
-                    cursor: pointer;
-                    border: 1px solid #ccc;
-                    border-bottom: none;
-                    border-radius: 5px 5px 0 0;
-                    margin-right: 5px;
-                }}
-                .tab.active {{
-                    background-color: #0066cc;
-                    color: white;
-                }}
-                .tab-content {{
-                    display: none;
-                }}
-                .tab-content.active {{
-                    display: block;
-                }}
-                .month-tabs {{
-                    display: flex;
-                    flex-wrap: wrap;
-                    margin-bottom: 20px;
-                    border-bottom: 1px solid #ccc;
-                }}
-                .month-tab {{
-                    padding: 8px 16px;
-                    background-color: #eee;
-                    cursor: pointer;
-                    border: 1px solid #ddd;
-                    border-bottom: none;
-                    border-radius: 4px 4px 0 0;
-                    margin-right: 4px;
-                    margin-bottom: 0;
-                    font-size: 0.9em;
-                }}
-                .month-tab.active {{
-                    background-color: #4a86e8;
-                    color: white;
-                }}
-                .month-content {{
-                    margin-top: 20px;
-                }}
-                .search {{
-                    padding: 10px;
-                    margin-bottom: 20px;
-                    width: 100%;
-                    box-sizing: border-box;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                }}
-                .cost-cell {{
-                    text-align: right;
-                }}
-                .service-legend {{
-                    margin-bottom: 20px;
-                    display: flex;
-                    flex-wrap: wrap;
-                }}
-                .service-item {{
-                    margin-right: 20px;
-                    margin-bottom: 10px;
-                    display: flex;
-                    align-items: center;
-                }}
-                .service-color {{
-                    width: 20px;
-                    height: 20px;
-                    margin-right: 5px;
-                    border-radius: 3px;
-                }}
-                .dashboard {{
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: 20px;
-                    margin-bottom: 20px;
-                }}
-                .dashboard-card {{
-                    background-color: #fff;
-                    border: 1px solid #ddd;
-                    border-radius: 5px;
-                    padding: 15px;
-                    flex: 1;
-                    min-width: 200px;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }}
-                .card-title {{
-                    font-size: 0.9em;
-                    margin-bottom: 10px;
-                    color: #666;
-                }}
-                .card-value {{
-                    font-size: 1.8em;
-                    font-weight: bold;
-                    color: #0066cc;
-                }}
-                .account-tabs {{
-                    display: flex;
-                    flex-wrap: wrap;
-                    margin-bottom: 20px;
-                }}
-                .account-tab {{
-                    padding: 10px 15px;
-                    margin-right: 5px;
-                    margin-bottom: 5px;
-                    font-size: 0.9em;
-                }}
-                .account-content {{
-                    margin-top: 20px;
-                }}
-                .account-view-tabs {{
-                    margin-bottom: 10px;
-                }}
-                .account-view-content {{
-                    margin-bottom: 30px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Relatório de Custos AWS</h1>
-                <div class="timestamp">Gerado em: {timestamp}</div>
-                
-                <div class="summary">
-                    <h2>Resumo de Custos</h2>
-                    <p>Total de Contas Analisadas: {len(summary_df_list)}</p>
+        html_content = f"""<!DOCTYPE html>
+    <html lang="pt-br">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Relatório de Custos AWS</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 20px;
+                color: #333;
+            }}
+            h1, h2, h3 {{
+                color: #0066cc;
+            }}
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+            }}
+            table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin-bottom: 30px;
+                font-size: 14px;
+            }}
+            th, td {{
+                text-align: left;
+                padding: 10px;
+                border: 1px solid #ddd;
+            }}
+            th {{
+                background-color: #0066cc;
+                color: white;
+                position: sticky;
+                top: 0;
+                z-index: 10;
+                cursor: pointer;
+            }}
+            th.sortable:hover {{
+                background-color: #0055aa;
+            }}
+            th.sortable:after {{
+                content: "\\00a0\\00a0\\00a0"; /* Espaço para o ícone de ordenação */
+            }}
+            th.sort-asc:after {{
+                content: "\\2191"; /* Seta para cima */
+            }}
+            th.sort-desc:after {{
+                content: "\\2193"; /* Seta para baixo */
+            }}
+            tr:nth-child(even) {{
+                background-color: #f5f5f5;
+            }}
+            tr:hover {{
+                background-color: #e9f1fa;
+            }}
+            .high-percentage {{
+                background-color: #FFEB9C;
+            }}
+            .timestamp {{
+                font-size: 0.8em;
+                color: #666;
+                margin-bottom: 20px;
+            }}
+            .summary {{
+                background-color: #f0f7ff;
+                padding: 15px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+            }}
+            .tabs {{
+                display: flex;
+                margin-bottom: 20px;
+                border-bottom: 1px solid #ccc;
+            }}
+            .tab {{
+                padding: 10px 20px;
+                background-color: #ddd;
+                cursor: pointer;
+                border: 1px solid #ccc;
+                border-bottom: none;
+                border-radius: 5px 5px 0 0;
+                margin-right: 5px;
+            }}
+            .tab.active {{
+                background-color: #0066cc;
+                color: white;
+            }}
+            .tab-content {{
+                display: none;
+            }}
+            .tab-content.active {{
+                display: block;
+            }}
+            .month-tabs {{
+                display: flex;
+                flex-wrap: wrap;
+                margin-bottom: 20px;
+                border-bottom: 1px solid #ccc;
+            }}
+            .month-tab {{
+                padding: 8px 16px;
+                background-color: #eee;
+                cursor: pointer;
+                border: 1px solid #ddd;
+                border-bottom: none;
+                border-radius: 4px 4px 0 0;
+                margin-right: 4px;
+                margin-bottom: 0;
+                font-size: 0.9em;
+            }}
+            .month-tab.active {{
+                background-color: #4a86e8;
+                color: white;
+            }}
+            .month-content {{
+                margin-top: 20px;
+            }}
+            .search {{
+                padding: 10px;
+                margin-bottom: 20px;
+                width: 100%;
+                box-sizing: border-box;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }}
+            .cost-cell {{
+                text-align: right;
+            }}
+            .service-legend {{
+                margin-bottom: 20px;
+                display: flex;
+                flex-wrap: wrap;
+            }}
+            .service-item {{
+                margin-right: 20px;
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+            }}
+            .service-color {{
+                width: 20px;
+                height: 20px;
+                margin-right: 5px;
+                border-radius: 3px;
+            }}
+            .dashboard {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 20px;
+                margin-bottom: 20px;
+            }}
+            .dashboard-card {{
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 15px;
+                flex: 1;
+                min-width: 200px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .card-title {{
+                font-size: 0.9em;
+                margin-bottom: 10px;
+                color: #666;
+            }}
+            .card-value {{
+                font-size: 1.8em;
+                font-weight: bold;
+                color: #0066cc;
+            }}
+            .account-tabs {{
+                display: flex;
+                flex-wrap: wrap;
+                margin-bottom: 20px;
+            }}
+            .account-tab {{
+                padding: 10px 15px;
+                margin-right: 5px;
+                margin-bottom: 5px;
+                font-size: 0.9em;
+            }}
+            .account-content {{
+                margin-top: 20px;
+            }}
+            .account-view-tabs {{
+                margin-bottom: 10px;
+            }}
+            .account-view-content {{
+                margin-bottom: 30px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Relatório de Custos AWS</h1>
+            <div class="timestamp">Gerado em: {timestamp}</div>
+            
+            <div class="summary">
+                <h2>Resumo de Custos</h2>
+                <p>Total de Contas Analisadas: {len(summary_df_list)}</p>
+            </div>
+            
+            <div class="tabs">
+                <div class="tab active" onclick="showTab('contas')">Por Conta</div>
+                <div class="tab" onclick="showTab('resumo')">Resumo Geral</div>
+                <div class="tab" onclick="showTab('todos-meses')">Todos os Meses</div>
+            </div>
+            
+            <div id="contas" class="tab-content active">
+                <div class="account-tabs">
+                    {account_tabs_html}
                 </div>
                 
-                <div class="tabs">
-                    <div class="tab active" onclick="showTab('contas')">Por Conta</div>
-                    <div class="tab" onclick="showTab('resumo')">Resumo Geral</div>
-                    <div class="tab" onclick="showTab('todos-meses')">Todos os Meses</div>
-                </div>
+                {account_contents_html}
+            </div>
+            
+            <div id="resumo" class="tab-content">
+                <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
                 
-                <div id="contas" class="tab-content active">
-                    <div class="account-tabs">
-                        {account_tabs_html}
-                    </div>
-                    
-                    {account_contents_html}
-                </div>
-                
-                <div id="resumo" class="tab-content">
-                    <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
-                    
-                    <div style="overflow-x: auto;">
-                        <table id="resumoTable" class="sortable-table">
-                            <thead>
-                                <tr>
-                                    {combined_headers}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {combined_table_body}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                
-                <div id="todos-meses" class="tab-content">
-                    <input type="text" id="searchTodosMeses" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('todosMesesTable', 'searchTodosMeses')">
-                    
-                    <div style="overflow-x: auto;">
-                        <table id="todosMesesTable" class="sortable-table">
-                            <thead>
-                                <tr>
-                                    {all_monthly_headers}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {all_monthly_table_body}
-                            </tbody>
-                        </table>
-                    </div>
+                <div style="overflow-x: auto;">
+                    <table id="resumoTable" class="sortable-table">
+                        <thead>
+                            <tr>
+                                {combined_headers}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {combined_table_body}
+                        </tbody>
+                    </table>
                 </div>
             </div>
             
-            <script>
-                // Variáveis globais para rastrear estado
-                var activeMainTab = 'contas';
-                var activeAccountId = '{summary_df_list[0]["account_id"] if summary_df_list else ""}';
-                var activeAccountViewTab = {{}}; // Para cada conta, qual visualização está ativa (resumo/mensal)
-                var activeMonthTab = {{}}; // Para cada conta, qual mês está ativo
+            <div id="todos-meses" class="tab-content">
+                <input type="text" id="searchTodosMeses" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('todosMesesTable', 'searchTodosMeses')">
                 
-                // Inicializar estado
-                document.addEventListener('DOMContentLoaded', function() {{
-                    // Inicializar estados para cada conta
-                    const accountContents = document.querySelectorAll('.account-content');
-                    for (let i = 0; i < accountContents.length; i++) {{
-                        const accountId = accountContents[i].id.replace('account-', '');
-                        activeAccountViewTab[accountId] = 'resumo';
-                        
-                        // Encontrar o primeiro mês para cada conta
-                        const monthTabs = document.querySelectorAll('.month-tab[id^="tab-' + accountId + '"]');
-                        if (monthTabs.length > 0) {{
-                            const firstMonthId = monthTabs[0].id.split('-').slice(2).join('-');
-                            activeMonthTab[accountId] = firstMonthId;
-                        }}
+                <div style="overflow-x: auto;">
+                    <table id="todosMesesTable" class="sortable-table">
+                        <thead>
+                            <tr>
+                                {all_monthly_headers}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {all_monthly_table_body}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+            // Variáveis globais para rastrear estado
+            var activeMainTab = 'contas';
+            var activeAccountId = '{summary_df_list[0]["account_id"] if summary_df_list else ""}';
+            var activeAccountViewTab = {{}}; // Para cada conta, qual visualização está ativa (resumo/mensal)
+            var activeMonthTab = {{}}; // Para cada conta, qual mês está ativo
+            
+            // Inicializar estado
+            document.addEventListener('DOMContentLoaded', function() {{
+                // Inicializar estados para cada conta
+                const accountContents = document.querySelectorAll('.account-content');
+                for (let i = 0; i < accountContents.length; i++) {{
+                    const accountId = accountContents[i].id.replace('account-', '');
+                    activeAccountViewTab[accountId] = 'resumo';
+                    
+                    // Encontrar o primeiro mês para cada conta
+                    const monthTabs = document.querySelectorAll('.month-tab[id^="tab-' + accountId + '"]');
+                    if (monthTabs.length > 0) {{
+                        const firstMonthId = monthTabs[0].id.split('-').slice(2).join('-');
+                        activeMonthTab[accountId] = firstMonthId;
                     }}
-                    
-                    // Destacar células com percentuais altos
-                    highlightHighPercentages();
-                    
-                    // Inicializar a funcionalidade de ordenação para todas as tabelas
-                    initSortableTables();
-                }});
-                
-                function showTab(tabId) {{
-                    // Ocultar todos os conteúdos
-                    var contents = document.getElementsByClassName('tab-content');
-                    for (var i = 0; i < contents.length; i++) {{
-                        contents[i].classList.remove('active');
-                        contents[i].style.display = 'none';
-                    }}
-                    
-                    // Atualizar abas principais
-                    var tabs = document.querySelector('.tabs').querySelectorAll('.tab');
-                    for (var i = 0; i < tabs.length; i++) {{
-                        tabs[i].classList.remove('active');
-                    }}
-                    
-                    // Mostrar conteúdo selecionado
-                    document.getElementById(tabId).classList.add('active');
-                    document.getElementById(tabId).style.display = 'block';
-                    
-                    // Atualizar aba ativa
-                    event.currentTarget.classList.add('active');
-                    
-                    // Atualizar estado global
-                    activeMainTab = tabId;
                 }}
                 
-                function showAccountTab(accountId) {{
-                    // Ocultar todos os conteúdos de conta
-                    var accountContents = document.getElementsByClassName('account-content');
-                    for (var i = 0; i < accountContents.length; i++) {{
-                        accountContents[i].style.display = 'none';
-                    }}
-                    
-                    // Atualizar abas de conta
-                    var accountTabs = document.getElementsByClassName('account-tab');
-                    for (var i = 0; i < accountTabs.length; i++) {{
-                        accountTabs[i].classList.remove('active');
-                    }}
-                    
-                    // Mostrar conteúdo da conta selecionada
-                    document.getElementById('account-' + accountId).style.display = 'block';
-                    
-                    // Atualizar aba ativa
-                    document.getElementById('tab-account-' + accountId).classList.add('active');
-                    
-                    // Atualizar estado global
-                    activeAccountId = accountId;
+                // Destacar células com percentuais altos
+                highlightHighPercentages();
+                
+                // Inicializar a funcionalidade de ordenação para todas as tabelas
+                initSortableTables();
+            }});
+            
+            function showTab(tabId) {{
+                // Ocultar todos os conteúdos
+                var contents = document.getElementsByClassName('tab-content');
+                for (var i = 0; i < contents.length; i++) {{
+                    contents[i].classList.remove('active');
+                    contents[i].style.display = 'none';
                 }}
                 
-                function showAccountViewTab(accountId, viewTabId) {{
-                    // Ocultar todos os conteúdos de visualização
-                    var viewContents = document.getElementById('account-' + accountId).querySelectorAll('.account-view-content');
-                    for (var i = 0; i < viewContents.length; i++) {{
-                        viewContents[i].style.display = 'none';
-                    }}
-                    
-                    // Atualizar abas de visualização
-                    var viewTabs = document.getElementById('account-' + accountId).querySelectorAll('.account-view-tabs .tab');
-                    for (var i = 0; i < viewTabs.length; i++) {{
-                        viewTabs[i].classList.remove('active');
-                    }}
-                    
-                    // Mostrar conteúdo da visualização selecionada
-                    document.getElementById('account-' + viewTabId + '-' + accountId).style.display = 'block';
-                    
-                    // Atualizar aba ativa (clicar no segundo filho da account-view-tabs)
-                    event.currentTarget.classList.add('active');
-                    
-                    // Atualizar estado global
-                    activeAccountViewTab[accountId] = viewTabId;
+                // Atualizar abas principais
+                var tabs = document.querySelector('.tabs').querySelectorAll('.tab');
+                for (var i = 0; i < tabs.length; i++) {{
+                    tabs[i].classList.remove('active');
                 }}
                 
-                function showAccountMonthTab(accountId, monthId) {{
-                    // Ocultar todos os conteúdos de mês para esta conta
-                    var monthContents = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-content');
-                    for (var i = 0; i < monthContents.length; i++) {{
-                        monthContents[i].style.display = 'none';
-                    }}
-                    
-                    // Atualizar abas de mês para esta conta
-                    var monthTabs = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-tab');
-                    for (var i = 0; i < monthTabs.length; i++) {{
-                        monthTabs[i].classList.remove('active');
-                    }}
-                    
-                    // Mostrar conteúdo do mês selecionado
-                    document.getElementById('month-' + accountId + '-' + monthId).style.display = 'block';
-                    
-                    // Atualizar aba ativa
-                    document.getElementById('tab-' + accountId + '-' + monthId).classList.add('active');
-                    
-                    // Atualizar estado global
-                    activeMonthTab[accountId] = monthId;
+                // Mostrar conteúdo selecionado
+                document.getElementById(tabId).classList.add('active');
+                document.getElementById(tabId).style.display = 'block';
+                
+                // Atualizar aba ativa
+                event.currentTarget.classList.add('active');
+                
+                // Atualizar estado global
+                activeMainTab = tabId;
+            }}
+            
+            function showAccountTab(accountId) {{
+                // Ocultar todos os conteúdos de conta
+                var accountContents = document.getElementsByClassName('account-content');
+                for (var i = 0; i < accountContents.length; i++) {{
+                    accountContents[i].style.display = 'none';
                 }}
                 
-                function filterTable(tableId, inputId) {{
-                    var input, filter, table, tr, td, i, j, txtValue, found;
-                    input = document.getElementById(inputId);
-                    filter = input.value.toUpperCase();
-                    table = document.getElementById(tableId);
-                    tr = table.getElementsByTagName("tr");
+                // Atualizar abas de conta
+                var accountTabs = document.getElementsByClassName('account-tab');
+                for (var i = 0; i < accountTabs.length; i++) {{
+                    accountTabs[i].classList.remove('active');
+                }}
+                
+                // Mostrar conteúdo da conta selecionada
+                document.getElementById('account-' + accountId).style.display = 'block';
+                
+                // Atualizar aba ativa
+                document.getElementById('tab-account-' + accountId).classList.add('active');
+                
+                // Atualizar estado global
+                activeAccountId = accountId;
+            }}
+            
+            function showAccountViewTab(accountId, viewTabId) {{
+                // Ocultar todos os conteúdos de visualização
+                var viewContents = document.getElementById('account-' + accountId).querySelectorAll('.account-view-content');
+                for (var i = 0; i < viewContents.length; i++) {{
+                    viewContents[i].style.display = 'none';
+                }}
+                
+                // Atualizar abas de visualização
+                var viewTabs = document.getElementById('account-' + accountId).querySelectorAll('.account-view-tabs .tab');
+                for (var i = 0; i < viewTabs.length; i++) {{
+                    viewTabs[i].classList.remove('active');
+                }}
+                
+                // Mostrar conteúdo da visualização selecionada
+                document.getElementById('account-' + viewTabId + '-' + accountId).style.display = 'block';
+                
+                // Atualizar aba ativa (clicar no segundo filho da account-view-tabs)
+                event.currentTarget.classList.add('active');
+                
+                // Atualizar estado global
+                activeAccountViewTab[accountId] = viewTabId;
+            }}
+            
+            function showAccountMonthTab(accountId, monthId) {{
+                // Ocultar todos os conteúdos de mês para esta conta
+                var monthContents = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-content');
+                for (var i = 0; i < monthContents.length; i++) {{
+                    monthContents[i].style.display = 'none';
+                }}
+                
+                // Atualizar abas de mês para esta conta
+                var monthTabs = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-tab');
+                for (var i = 0; i < monthTabs.length; i++) {{
+                    monthTabs[i].classList.remove('active');
+                }}
+                
+                // Mostrar conteúdo do mês selecionado
+                document.getElementById('month-' + accountId + '-' + monthId).style.display = 'block';
+                
+                // Atualizar aba ativa
+                document.getElementById('tab-' + accountId + '-' + monthId).classList.add('active');
+                
+                // Atualizar estado global
+                activeMonthTab[accountId] = monthId;
+            }}
+            
+            function filterTable(tableId, inputId) {{
+                var input, filter, table, tr, td, i, j, txtValue, found;
+                input = document.getElementById(inputId);
+                filter = input.value.toUpperCase();
+                table = document.getElementById(tableId);
+                tr = table.getElementsByTagName("tr");
+                
+                for (i = 1; i < tr.length; i++) {{
+                    found = false;
+                    td = tr[i].getElementsByTagName("td");
                     
-                    for (i = 1; i < tr.length; i++) {{
-                        found = false;
-                        td = tr[i].getElementsByTagName("td");
-                        
-                        for (j = 0; j < 3; j++) {{
-                            if (td[j]) {{
-                                txtValue = td[j].textContent || td[j].innerText;
-                                if (txtValue.toUpperCase().indexOf(filter) > -1) {{
-                                    found = true;
-                                    break;
-                                }}
+                    for (j = 0; j < 3; j++) {{
+                        if (td[j]) {{
+                            txtValue = td[j].textContent || td[j].innerText;
+                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                                found = true;
+                                break;
                             }}
                         }}
-                        
-                        if (found) {{
-                            tr[i].style.display = "";
-                        }} else {{
-                            tr[i].style.display = "none";
-                        }}
+                    }}
+                    
+                    if (found) {{
+                        tr[i].style.display = "";
+                    }} else {{
+                        tr[i].style.display = "none";
                     }}
                 }}
+            }}
+            
+            function filterAccountTable(accountId) {{
+                const tableId = 'resumo-table-' + accountId;
+                const inputId = 'search-account-' + accountId;
                 
-                function filterAccountTable(accountId) {{
-                    const tableId = 'resumo-table-' + accountId;
-                    const inputId = 'search-account-' + accountId;
+                var input, filter, table, tr, td, i, j, txtValue, found;
+                input = document.getElementById(inputId);
+                filter = input.value.toUpperCase();
+                table = document.getElementById(tableId);
+                tr = table.getElementsByTagName("tr");
+                
+                for (i = 1; i < tr.length; i++) {{
+                    found = false;
+                    td = tr[i].getElementsByTagName("td");
                     
-                    var input, filter, table, tr, td, i, j, txtValue, found;
-                    input = document.getElementById(inputId);
-                    filter = input.value.toUpperCase();
-                    table = document.getElementById(tableId);
-                    tr = table.getElementsByTagName("tr");
-                    
-                    for (i = 1; i < tr.length; i++) {{
-                        found = false;
-                        td = tr[i].getElementsByTagName("td");
-                        
-                        for (j = 0; j < td.length; j++) {{
-                            if (td[j]) {{
-                                txtValue = td[j].textContent || td[j].innerText;
-                                if (txtValue.toUpperCase().indexOf(filter) > -1) {{
-                                    found = true;
-                                    break;
-                                }}
+                    for (j = 0; j < td.length; j++) {{
+                        if (td[j]) {{
+                            txtValue = td[j].textContent || td[j].innerText;
+                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                                found = true;
+                                break;
                             }}
                         }}
-                        
-                        if (found) {{
-                            tr[i].style.display = "";
-                        }} else {{
-                            tr[i].style.display = "none";
-                        }}
+                    }}
+                    
+                    if (found) {{
+                        tr[i].style.display = "";
+                    }} else {{
+                        tr[i].style.display = "none";
                     }}
                 }}
-                
-                function highlightHighPercentages() {{
-                    const tables = document.querySelectorAll('table');
-                    tables.forEach(table => {{
-                        const headerRow = table.querySelector('tr');
-                        if (!headerRow) return;
-                        
-                        const headers = headerRow.querySelectorAll('th');
-                        
-                        for (let i = 0; i < headers.length; i++) {{
-                            if (headers[i].textContent === '%') {{
-                                const colIndex = i;
-                                
-                                const rows = table.querySelectorAll('tbody tr');
-                                for (let j = 0; j < rows.length; j++) {{
-                                    const cell = rows[j].querySelectorAll('td')[colIndex];
-                                    if (cell) {{
-                                        const percentText = cell.textContent.trim();
-                                        const percentValue = parseFloat(percentText);
-                                        if (!isNaN(percentValue) && percentValue > 10) {{
-                                            cell.classList.add('high-percentage');
-                                        }}
+            }}
+            
+            function highlightHighPercentages() {{
+                const tables = document.querySelectorAll('table');
+                tables.forEach(table => {{
+                    const headerRow = table.querySelector('tr');
+                    if (!headerRow) return;
+                    
+                    const headers = headerRow.querySelectorAll('th');
+                    
+                    for (let i = 0; i < headers.length; i++) {{
+                        if (headers[i].textContent.includes('%')) {{
+                            const colIndex = i;
+                            
+                            const rows = table.querySelectorAll('tbody tr');
+                            for (let j = 0; j < rows.length; j++) {{
+                                const cell = rows[j].querySelectorAll('td')[colIndex];
+                                if (cell) {{
+                                    const percentText = cell.textContent.trim();
+                                    const percentValue = parseFloat(percentText);
+                                    if (!isNaN(percentValue) && percentValue > 10) {{
+                                        cell.classList.add('high-percentage');
                                     }}
                                 }}
                             }}
                         }}
-                    }});
-                }}
+                    }}
+                }});
+            }}
+            
+            // Função para inicializar a ordenação em todas as tabelas
+            function initSortableTables() {{
+                const sortableTables = document.querySelectorAll('.sortable-table');
                 
-                // Função para inicializar a ordenação em todas as tabelas
-                function initSortableTables() {{
-                    const sortableTables = document.querySelectorAll('.sortable-table');
+                sortableTables.forEach(table => {{
+                    const headers = table.querySelectorAll('th.sortable');
                     
-                    sortableTables.forEach(table => {{
-                        const headers = table.querySelectorAll('th.sortable');
-                        
-                        headers.forEach((header, index) => {{
-                            header.addEventListener('click', function() {{
-                                sortTable(table, index, this);
-                            }});
+                    headers.forEach((header, index) => {{
+                        header.addEventListener('click', function() {{
+                            sortTable(table, index, this);
                         }});
                     }});
-                }}
+                }});
+            }}
+            
+            // Função para ordenar uma tabela
+            function sortTable(table, colIndex, header) {{
+                const rows = Array.from(table.querySelectorAll('tbody tr'));
+                const thead = table.querySelector('thead');
+                const headers = thead.querySelectorAll('th');
+                const isAsc = header.classList.contains('sort-asc');
                 
-                // Função para ordenar uma tabela
-                function sortTable(table, colIndex, header) {{
-                    const rows = Array.from(table.querySelectorAll('tbody tr'));
-                    const thead = table.querySelector('thead');
-                    const headers = thead.querySelectorAll('th');
-                    const isAsc = header.classList.contains('sort-asc');
-                    
-                    // Remover classes de ordenação de todos os cabeçalhos
-                    headers.forEach(h => {{
-                        h.classList.remove('sort-asc', 'sort-desc');
-                    }});
-                    
-                    // Adicionar classe de ordenação ao cabeçalho atual
-                    header.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
-                    
-                    // Ordenar as linhas
-                    rows.sort((a, b) => {{
-                        const cellA = a.querySelectorAll('td')[colIndex].textContent.trim();
-                        const cellB = b.querySelectorAll('td')[colIndex].textContent.trim();
-                        
-                        // Verificar se a célula contém um valor monetário (começa com $)
-                        if (cellA.startsWith('$') && cellB.startsWith('$')) {{
-                            // Remover $ e vírgulas, depois converter para número
-                            const numA = parseFloat(cellA.replace(/[$,]/g, ''));
-                            const numB = parseFloat(cellB.replace(/[$,]/g, ''));
-                            return isAsc ? numB - numA : numA - numB;
-                        }}
-                        // Verificar se a célula contém uma porcentagem
-                        else if (cellA.endsWith('%') && cellB.endsWith('%')) {{
-                            const numA = parseFloat(cellA);
-                            const numB = parseFloat(cellB);
-                            return isAsc ? numB - numA : numA - numB;
-                        }}
-                        // Ordenação padrão como texto
-                        else {{
-                            return isAsc ? 
-                                cellB.localeCompare(cellA, undefined, {{numeric: true, sensitivity: 'base'}}) :
-                                cellA.localeCompare(cellB, undefined, {{numeric: true, sensitivity: 'base'}});
-                        }}
-                    }});
-                    
-                    // Reconstruir a tabela com linhas ordenadas
-                    const tbody = table.querySelector('tbody');
-                    tbody.innerHTML = '';
-                    
-                    rows.forEach(row => {{
-                        tbody.appendChild(row);
-                    }});
-                }}
-            </script>
-        </body>
-        </html>"""
+                // Remover classes de ordenação de todos os cabeçalhos
+                headers.forEach(h => {{
+                    h.classList.remove('sort-asc', 'sort-desc');
+                }});
                 
-                # Salvar o arquivo HTML
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write(html_content)
+                // Adicionar classe de ordenação ao cabeçalho atual
+                header.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
                 
-                print(f"Relatório HTML gerado com sucesso: {output_path}")
+                // Ordenar as linhas
+                rows.sort((a, b) => {{
+                    const cellA = a.querySelectorAll('td')[colIndex].textContent.trim();
+                    const cellB = b.querySelectorAll('td')[colIndex].textContent.trim();
+                    
+                    // Verificar se a célula contém um valor monetário (começa com $)
+                    if (cellA.startsWith('$') && cellB.startsWith('$')) {{
+                        // Remover $ e vírgulas, depois converter para número
+                        const numA = parseFloat(cellA.replace(/[$,]/g, ''));
+                        const numB = parseFloat(cellB.replace(/[$,]/g, ''));
+                        return isAsc ? numB - numA : numA - numB;
+                    }}
+                    // Verificar se a célula contém uma porcentagem
+                    else if (cellA.endsWith('%') && cellB.endsWith('%')) {{
+                        const numA = parseFloat(cellA);
+                        const numB = parseFloat(cellB);
+                        return isAsc ? numB - numA : numA - numB;
+                    }}
+                    // Ordenação padrão como texto
+                    else {{
+                        return isAsc ? 
+                            cellB.localeCompare(cellA, undefined, {{numeric: true, sensitivity: 'base'}}) :
+                            cellA.localeCompare(cellB, undefined, {{numeric: true, sensitivity: 'base'}});
+                    }}
+                }});
+                
+                // Reconstruir a tabela com linhas ordenadas
+                const tbody = table.querySelector('tbody');
+                tbody.innerHTML = '';
+                
+                rows.forEach(row => {{
+                    tbody.appendChild(row);
+                }});
+            }}
+        </script>
+    </body>
+    </html>"""
+            
+        # Salvar o arquivo HTML
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        
+        print(f"Relatório HTML gerado com sucesso: {output_path}")
 
 
 def main():
