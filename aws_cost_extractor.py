@@ -6,11 +6,24 @@ import sys
 import json
 import webbrowser
 import time
+import re
 from botocore.exceptions import ClientError
 from dateutil.relativedelta import relativedelta
 import argparse
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.dimensions import ColumnDimension, DimensionHolder
+from openpyxl.formatting.rule import ColorScaleRule
+import locale
+
+# Configurar localidade para formatação de números
+try:
+    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+except:
+    try:
+        locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
+    except:
+        pass  # Fallback para configuração padrão
 
 
 class AWSSSOAuth:
@@ -288,6 +301,16 @@ class AWSCostExtractor:
         self.access_token = access_token
         self.account_data = []
         
+        # Serviços a serem analisados
+        self.services = {
+            'CloudWatch': 'Amazon CloudWatch',
+            'DynamoDB': 'Amazon DynamoDB',
+            'RDS': 'Amazon Relational Database Service',
+            'Config': 'AWS Config',
+            'ECS': 'Amazon Elastic Container Service',
+            'EC2': 'Amazon Elastic Compute Cloud - Compute'
+        }
+        
     def get_cost_data(self, account_id, account_name, role_name):
         """
         Obtém dados de custo para uma conta específica.
@@ -327,85 +350,147 @@ class AWSCostExtractor:
                 Metrics=['UnblendedCost']
             )
             
-            # Obter custo do CloudWatch
-            cloudwatch_cost_response = cost_explorer.get_cost_and_usage(
-                TimePeriod={
-                    'Start': start_str,
-                    'End': end_str
-                },
-                Granularity='MONTHLY',
-                Filter={
-                    "Dimensions": {
-                        "Key": "SERVICE",
-                        "Values": ["Amazon CloudWatch"]
-                    }
-                },
-                Metrics=['UnblendedCost']
-            )
-            
-            # Processar resultados
+            # Processar resultados do custo total
             months = []
+            month_start_dates = []
             total_costs = []
-            cloudwatch_costs = []
-            percentages = []
             
             # Extrair custos totais por mês
             for result in total_cost_response['ResultsByTime']:
                 period = result['TimePeriod']
-                month = datetime.datetime.strptime(period['Start'], '%Y-%m-%d').strftime('%b-%Y')
-                months.append(month)
+                start_date = period['Start']
+                month_start_dates.append(start_date)
+                month_obj = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+                month_name = month_obj.strftime('%b/%Y')
+                months.append(month_name)
                 
                 amount = float(result['Total']['UnblendedCost']['Amount'])
                 total_costs.append(amount)
             
-            # Extrair custos do CloudWatch por mês
-            for result in cloudwatch_cost_response['ResultsByTime']:
-                if 'Total' in result and 'UnblendedCost' in result['Total']:
-                    amount = float(result['Total']['UnblendedCost']['Amount'])
-                else:
-                    amount = 0.0
-                cloudwatch_costs.append(amount)
+            # Dicionário para armazenar custos de cada serviço
+            service_costs = {}
+            service_percentages = {}
             
-            # Calcular percentuais
-            for total, cloudwatch in zip(total_costs, cloudwatch_costs):
-                if total > 0:
-                    percentage = (cloudwatch / total) * 100
-                else:
-                    percentage = 0.0
-                percentages.append(percentage)
+            # Obter custo de cada serviço
+            for service_key, service_name in self.services.items():
+                try:
+                    service_response = cost_explorer.get_cost_and_usage(
+                        TimePeriod={
+                            'Start': start_str,
+                            'End': end_str
+                        },
+                        Granularity='MONTHLY',
+                        Filter={
+                            "Dimensions": {
+                                "Key": "SERVICE",
+                                "Values": [service_name]
+                            }
+                        },
+                        Metrics=['UnblendedCost']
+                    )
+                    
+                    # Processar resultados do serviço
+                    service_monthly_costs = []
+                    
+                    # Alinhar os resultados com os meses
+                    for start_date in month_start_dates:
+                        found = False
+                        for result in service_response['ResultsByTime']:
+                            if result['TimePeriod']['Start'] == start_date:
+                                if 'Total' in result and 'UnblendedCost' in result['Total']:
+                                    amount = float(result['Total']['UnblendedCost']['Amount'])
+                                else:
+                                    amount = 0.0
+                                service_monthly_costs.append(amount)
+                                found = True
+                                break
+                        if not found:
+                            service_monthly_costs.append(0.0)
+                    
+                    service_costs[service_key] = service_monthly_costs
+                    
+                except Exception as e:
+                    print(f"Erro ao obter dados do serviço {service_name} para a conta {account_id}: {str(e)}")
+                    service_costs[service_key] = [0.0] * len(months)
+            
+            # Calcular percentuais para cada serviço
+            for service_key in self.services.keys():
+                service_percentages[service_key] = []
+                for i, total in enumerate(total_costs):
+                    if total > 0:
+                        percentage = (service_costs[service_key][i] / total) * 100
+                    else:
+                        percentage = 0.0
+                    service_percentages[service_key].append(percentage)
             
             # Calcular totais para os 3 meses
             total_3_months = sum(total_costs)
-            cloudwatch_3_months = sum(cloudwatch_costs)
-            percentage_3_months = (cloudwatch_3_months / total_3_months * 100) if total_3_months > 0 else 0.0
+            
+            service_totals = {}
+            service_total_percentages = {}
+            
+            for service_key in self.services.keys():
+                service_total = sum(service_costs[service_key])
+                service_totals[service_key] = service_total
+                
+                if total_3_months > 0:
+                    service_total_percentage = (service_total / total_3_months) * 100
+                else:
+                    service_total_percentage = 0.0
+                    
+                service_total_percentages[service_key] = service_total_percentage
             
             return {
                 'account_id': account_id,
                 'account_name': account_name,
                 'role_name': role_name,
                 'months': months,
+                'month_start_dates': month_start_dates,
                 'total_costs': total_costs,
-                'cloudwatch_costs': cloudwatch_costs,
-                'percentages': percentages,
+                'service_costs': service_costs,
+                'service_percentages': service_percentages,
                 'total_3_months': total_3_months,
-                'cloudwatch_3_months': cloudwatch_3_months,
-                'percentage_3_months': percentage_3_months
+                'service_totals': service_totals,
+                'service_total_percentages': service_total_percentages
             }
             
         except Exception as e:
             print(f"Erro ao obter dados de custo para a conta {account_id}: {str(e)}")
             return None
     
-    def extract_all_accounts_cost(self, role_name_preference=None):
+    def extract_all_accounts_cost(self, account_filter=None, max_accounts=None, role_name_preference=None):
         """
         Extrai dados de custo para todas as contas.
         
         Args:
+            account_filter: Filtro para nomes/IDs de contas (regex)
+            max_accounts: Número máximo de contas a processar
             role_name_preference: Lista de nomes de funções por ordem de preferência
         """
         accounts = self.sso_auth.list_available_accounts(self.access_token)
+        
+        # Aplicar filtro se especificado
+        if account_filter:
+            try:
+                filter_regex = re.compile(account_filter, re.IGNORECASE)
+                accounts = [account for account in accounts 
+                           if filter_regex.search(account['accountName']) or 
+                           filter_regex.search(account['accountId'])]
+                print(f"Filtro aplicado. {len(accounts)} contas correspondem ao filtro '{account_filter}'.")
+            except re.error as e:
+                print(f"Erro na expressão regular: {str(e)}. Ignorando filtro.")
+        
+        # Limitar número de contas se especificado
+        if max_accounts and max_accounts > 0 and max_accounts < len(accounts):
+            accounts = accounts[:max_accounts]
+            print(f"Limitando a {max_accounts} contas para processamento.")
+            
         total_accounts = len(accounts)
         
+        if total_accounts == 0:
+            print("Nenhuma conta encontrada para extrair dados. Verifique seu filtro ou permissões SSO.")
+            return
+            
         print(f"Encontradas {total_accounts} contas. Iniciando extração de custos...")
         
         for i, account in enumerate(accounts, 1):
@@ -473,14 +558,20 @@ class AWSCostExtractor:
         # Criar DataFrame para o resumo das contas
         summary_data = []
         for account in self.account_data:
-            summary_data.append({
+            row_data = {
                 'ID da Conta': account['account_id'],
                 'Nome da Conta': account['account_name'],
                 'Função': account['role_name'],
-                'Custo Total (USD)': account['total_3_months'],
-                'Custo CloudWatch (USD)': account['cloudwatch_3_months'],
-                'Percentual CloudWatch (%)': account['percentage_3_months']
-            })
+                'Custo Total (USD)': account['total_3_months']
+            }
+            
+            # Adicionar colunas para cada serviço
+            for service_key in self.services.keys():
+                row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
+                if service_key in ['CloudWatch', 'Config']:
+                    row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
+            
+            summary_data.append(row_data)
         
         summary_df = pd.DataFrame(summary_data)
         
@@ -488,14 +579,20 @@ class AWSCostExtractor:
         monthly_data = []
         for account in self.account_data:
             for i, month in enumerate(account['months']):
-                monthly_data.append({
+                row_data = {
                     'ID da Conta': account['account_id'],
                     'Nome da Conta': account['account_name'],
                     'Mês': month,
-                    'Custo Total (USD)': account['total_costs'][i],
-                    'Custo CloudWatch (USD)': account['cloudwatch_costs'][i],
-                    'Percentual CloudWatch (%)': account['percentages'][i]
-                })
+                    'Custo Total (USD)': account['total_costs'][i]
+                }
+                
+                # Adicionar colunas para cada serviço
+                for service_key in self.services.keys():
+                    row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                    if service_key in ['CloudWatch', 'Config']:
+                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                
+                monthly_data.append(row_data)
         
         monthly_df = pd.DataFrame(monthly_data)
         
@@ -511,58 +608,120 @@ class AWSCostExtractor:
             # Formatar as planilhas
             workbook = writer.book
             
+            # Estilo padrão para as células
+            border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
             # Formatar a planilha de resumo
-            worksheet = writer.sheets['Resumo']
-            
-            # Definir largura das colunas
-            for idx, col in enumerate(summary_df.columns):
-                column_width = max(len(col) + 2, summary_df[col].astype(str).map(len).max() + 2)
-                worksheet.column_dimensions[get_column_letter(idx + 1)].width = column_width
-            
-            # Formatar células numéricas
-            for row in range(2, len(summary_df) + 2):
-                worksheet.cell(row=row, column=4).number_format = '$#,##0.00'
-                worksheet.cell(row=row, column=5).number_format = '$#,##0.00'
-                worksheet.cell(row=row, column=6).number_format = '0.00%'
-                
-                # Destacar percentuais altos de CloudWatch (> 10%)
-                percentage = worksheet.cell(row=row, column=6).value
-                if percentage and percentage > 10:
-                    worksheet.cell(row=row, column=6).fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-            
-            # Formatar cabeçalhos
-            header_font = Font(bold=True)
-            header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-            header_alignment = Alignment(horizontal='center')
-            
-            for col in range(1, len(summary_df.columns) + 1):
-                cell = worksheet.cell(row=1, column=col)
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = header_alignment
+            self._format_worksheet(
+                worksheet=writer.sheets['Resumo'],
+                df=summary_df,
+                border=border,
+                total_col_idx=3,  # Índice da coluna "Custo Total (USD)"
+                service_keys=self.services.keys()
+            )
             
             # Formatar a planilha de detalhes mensais
-            worksheet = writer.sheets['Detalhes Mensais']
+            self._format_worksheet(
+                worksheet=writer.sheets['Detalhes Mensais'],
+                df=monthly_df,
+                border=border,
+                total_col_idx=3,  # Índice da coluna "Custo Total (USD)"
+                service_keys=self.services.keys()
+            )
             
-            # Definir largura das colunas
-            for idx, col in enumerate(monthly_df.columns):
-                column_width = max(len(col) + 2, monthly_df[col].astype(str).map(len).max() + 2)
-                worksheet.column_dimensions[get_column_letter(idx + 1)].width = column_width
-            
-            # Formatar células numéricas
-            for row in range(2, len(monthly_df) + 2):
-                worksheet.cell(row=row, column=4).number_format = '$#,##0.00'
-                worksheet.cell(row=row, column=5).number_format = '$#,##0.00'
-                worksheet.cell(row=row, column=6).number_format = '0.00%'
-            
-            # Formatar cabeçalhos
-            for col in range(1, len(monthly_df.columns) + 1):
-                cell = worksheet.cell(row=1, column=col)
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = header_alignment
+            # Adicionar filtros
+            writer.sheets['Resumo'].auto_filter.ref = writer.sheets['Resumo'].dimensions
+            writer.sheets['Detalhes Mensais'].auto_filter.ref = writer.sheets['Detalhes Mensais'].dimensions
         
-        print(f"Relatório gerado com sucesso: {output_path}")
+        print(f"Relatório Excel gerado com sucesso: {output_path}")
+    
+    def _format_worksheet(self, worksheet, df, border, total_col_idx, service_keys):
+        """
+        Formata uma planilha Excel.
+        
+        Args:
+            worksheet: Planilha a ser formatada
+            df: DataFrame com os dados
+            border: Estilo de borda
+            total_col_idx: Índice da coluna de custo total
+            service_keys: Lista de chaves dos serviços
+        """
+        # Definir largura das colunas
+        for idx, col in enumerate(df.columns):
+            column_width = max(len(col) + 2, df[col].astype(str).map(len).max() + 2)
+            column_width = min(column_width, 40)  # Limitar largura máxima
+            worksheet.column_dimensions[get_column_letter(idx + 1)].width = column_width
+        
+        # Formatar todas as células com borda
+        for row in range(1, len(df) + 2):
+            for col in range(1, len(df.columns) + 1):
+                cell = worksheet.cell(row=row, column=col)
+                cell.border = border
+        
+        # Formatar células numéricas
+        for row in range(2, len(df) + 2):
+            # Formatar custo total
+            worksheet.cell(row=row, column=total_col_idx + 1).number_format = '$#,##0.00'
+            
+            # Formatar colunas de serviços
+            col_offset = total_col_idx + 1
+            for service_key in service_keys:
+                # Formatar coluna USD
+                col_offset += 1
+                worksheet.cell(row=row, column=col_offset).number_format = '$#,##0.00'
+                
+                # Formatar coluna percentual (apenas para CloudWatch e Config)
+                if service_key in ['CloudWatch', 'Config']:
+                    col_offset += 1
+                    percent_cell = worksheet.cell(row=row, column=col_offset)
+                    percent_cell.number_format = '0.00%'
+                    
+                    # Destacar percentuais altos (> 10%)
+                    percentage = percent_cell.value
+                    if percentage and percentage > 10:
+                        percent_cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+        
+        # Formatar cabeçalhos
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        
+        for col in range(1, len(df.columns) + 1):
+            cell = worksheet.cell(row=1, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+        
+        # Congelar primeira linha
+        worksheet.freeze_panes = 'A2'
+        
+        # Adicionar regras de formatação condicional
+        # Destacar valores maiores em tons mais escuros de azul para colunas de custo
+        cost_columns = [total_col_idx + 1]  # Coluna de custo total
+        col_offset = total_col_idx + 1
+        for service_key in service_keys:
+            col_offset += 1
+            cost_columns.append(col_offset)
+            if service_key in ['CloudWatch', 'Config']:
+                col_offset += 1  # Pular coluna de percentual
+        
+        for col_idx in cost_columns:
+            col_letter = get_column_letter(col_idx)
+            max_row = len(df) + 1
+            worksheet.conditional_formatting.add(
+                f'{col_letter}2:{col_letter}{max_row}',
+                ColorScaleRule(
+                    start_type='min',
+                    start_color='EBEDF0',
+                    end_type='max',
+                    end_color='4472C4'
+                )
+            )
     
     def generate_html_report(self, output_path="aws_cost_report.html"):
         """
@@ -578,14 +737,20 @@ class AWSCostExtractor:
         # Criar DataFrame para o resumo das contas
         summary_data = []
         for account in self.account_data:
-            summary_data.append({
+            row_data = {
                 'ID da Conta': account['account_id'],
                 'Nome da Conta': account['account_name'],
                 'Função': account['role_name'],
-                'Custo Total (USD)': account['total_3_months'],
-                'Custo CloudWatch (USD)': account['cloudwatch_3_months'],
-                'Percentual CloudWatch (%)': account['percentage_3_months']
-            })
+                'Custo Total (USD)': account['total_3_months']
+            }
+            
+            # Adicionar colunas para cada serviço
+            for service_key in self.services.keys():
+                row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
+                if service_key in ['CloudWatch', 'Config']:
+                    row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
+            
+            summary_data.append(row_data)
         
         summary_df = pd.DataFrame(summary_data)
         
@@ -593,14 +758,20 @@ class AWSCostExtractor:
         monthly_data = []
         for account in self.account_data:
             for i, month in enumerate(account['months']):
-                monthly_data.append({
+                row_data = {
                     'ID da Conta': account['account_id'],
                     'Nome da Conta': account['account_name'],
                     'Mês': month,
-                    'Custo Total (USD)': account['total_costs'][i],
-                    'Custo CloudWatch (USD)': account['cloudwatch_costs'][i],
-                    'Percentual CloudWatch (%)': account['percentages'][i]
-                })
+                    'Custo Total (USD)': account['total_costs'][i]
+                }
+                
+                # Adicionar colunas para cada serviço
+                for service_key in self.services.keys():
+                    row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                    if service_key in ['CloudWatch', 'Config']:
+                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                
+                monthly_data.append(row_data)
         
         monthly_df = pd.DataFrame(monthly_data)
         
@@ -609,13 +780,20 @@ class AWSCostExtractor:
         monthly_df = monthly_df.sort_values(['Nome da Conta', 'Mês'])
         
         # Formatar os dados para exibição HTML
-        summary_df['Custo Total (USD)'] = summary_df['Custo Total (USD)'].map('${:,.2f}'.format)
-        summary_df['Custo CloudWatch (USD)'] = summary_df['Custo CloudWatch (USD)'].map('${:,.2f}'.format)
-        summary_df['Percentual CloudWatch (%)'] = summary_df['Percentual CloudWatch (%)'].map('{:.2f}%'.format)
+        summary_df_display = summary_df.copy()
+        monthly_df_display = monthly_df.copy()
         
-        monthly_df['Custo Total (USD)'] = monthly_df['Custo Total (USD)'].map('${:,.2f}'.format)
-        monthly_df['Custo CloudWatch (USD)'] = monthly_df['Custo CloudWatch (USD)'].map('${:,.2f}'.format)
-        monthly_df['Percentual CloudWatch (%)'] = monthly_df['Percentual CloudWatch (%)'].map('{:.2f}%'.format)
+        # Formatar colunas de custo
+        summary_df_display['Custo Total (USD)'] = summary_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
+        monthly_df_display['Custo Total (USD)'] = monthly_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
+        
+        for service_key in self.services.keys():
+            summary_df_display[f'{service_key} (USD)'] = summary_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+            monthly_df_display[f'{service_key} (USD)'] = monthly_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+            
+            if service_key in ['CloudWatch', 'Config']:
+                summary_df_display[f'% {service_key}'] = summary_df_display[f'% {service_key}'].map('{:.2f}%'.format)
+                monthly_df_display[f'% {service_key}'] = monthly_df_display[f'% {service_key}'].map('{:.2f}%'.format)
         
         # Criar HTML
         html_content = f"""
@@ -643,18 +821,24 @@ class AWSCostExtractor:
                     border-collapse: collapse;
                     width: 100%;
                     margin-bottom: 30px;
+                    font-size: 14px;
                 }}
                 th, td {{
                     text-align: left;
-                    padding: 12px;
-                    border-bottom: 1px solid #ddd;
+                    padding: 10px;
+                    border: 1px solid #ddd;
                 }}
                 th {{
                     background-color: #0066cc;
                     color: white;
+                    position: sticky;
+                    top: 0;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f5f5f5;
                 }}
                 tr:hover {{
-                    background-color: #f5f5f5;
+                    background-color: #e9f1fa;
                 }}
                 .high-percentage {{
                     background-color: #FFEB9C;
@@ -670,6 +854,56 @@ class AWSCostExtractor:
                     border-radius: 5px;
                     margin-bottom: 20px;
                 }}
+                .tabs {{
+                    display: flex;
+                    margin-bottom: 20px;
+                }}
+                .tab {{
+                    padding: 10px 20px;
+                    background-color: #ddd;
+                    cursor: pointer;
+                    border: 1px solid #ccc;
+                    border-bottom: none;
+                    border-radius: 5px 5px 0 0;
+                    margin-right: 5px;
+                }}
+                .tab.active {{
+                    background-color: #0066cc;
+                    color: white;
+                }}
+                .tab-content {{
+                    display: none;
+                }}
+                .tab-content.active {{
+                    display: block;
+                }}
+                .search {{
+                    padding: 10px;
+                    margin-bottom: 20px;
+                    width: 100%;
+                    box-sizing: border-box;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                }}
+                .cost-cell {{
+                    text-align: right;
+                }}
+                .service-legend {{
+                    margin-bottom: 20px;
+                    display: flex;
+                    flex-wrap: wrap;
+                }}
+                .service-item {{
+                    margin-right: 20px;
+                    margin-bottom: 10px;
+                    display: flex;
+                    align-items: center;
+                }}
+                .service-color {{
+                    width: 20px;
+                    height: 20px;
+                    margin-right: 5px;
+                }}
             </style>
         </head>
         <body>
@@ -682,41 +916,146 @@ class AWSCostExtractor:
                     <p>Total de Contas Analisadas: {len(summary_df)}</p>
                 </div>
                 
-                <h2>Custos por Conta</h2>
-                {summary_df.to_html(index=False, classes="table")}
+                <div class="tabs">
+                    <div class="tab active" onclick="showTab('resumo')">Resumo</div>
+                    <div class="tab" onclick="showTab('detalhes')">Detalhes Mensais</div>
+                </div>
                 
-                <h2>Detalhes Mensais</h2>
-                {monthly_df.to_html(index=False, classes="table")}
+                <div id="resumo" class="tab-content active">
+                    <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
+                    
+                    <div class="service-legend">
+                        <h3>Serviços analisados:</h3>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
+                            {''.join([f'<div class="service-item"><div class="service-color" style="background-color: #{hash(service_key) % 0xffffff:06x}"></div>{service_key}</div>' for service_key in self.services.keys()])}
+                        </div>
+                    </div>
+                    
+                    <div style="overflow-x: auto;">
+                        <table id="resumoTable">
+                            <thead>
+                                <tr>
+                                    {''.join([f'<th>{col}</th>' for col in summary_df_display.columns])}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {''.join([
+                                    '<tr>' + 
+                                    ''.join([
+                                        f'<td class="{"cost-cell" if "USD" in col or "%" in col else ""}">{value}</td>' 
+                                        for col, value in row.items()
+                                    ]) + 
+                                    '</tr>' 
+                                    for _, row in summary_df_display.iterrows()
+                                ])}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div id="detalhes" class="tab-content">
+                    <input type="text" id="searchDetalhes" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('detalhesTable', 'searchDetalhes')">
+                    
+                    <div style="overflow-x: auto;">
+                        <table id="detalhesTable">
+                            <thead>
+                                <tr>
+                                    {''.join([f'<th>{col}</th>' for col in monthly_df_display.columns])}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {''.join([
+                                    '<tr>' + 
+                                    ''.join([
+                                        f'<td class="{"cost-cell" if "USD" in col or "%" in col else ""}">{value}</td>' 
+                                        for col, value in row.items()
+                                    ]) + 
+                                    '</tr>' 
+                                    for _, row in monthly_df_display.iterrows()
+                                ])}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             
             <script>
-                // Destacar percentuais altos de CloudWatch (> 10%)
-                document.addEventListener('DOMContentLoaded', function() {{
+                // Alternar entre tabs
+                function showTab(tabId) {
+                    // Ocultar todos os conteúdos
+                    var contents = document.getElementsByClassName('tab-content');
+                    for (var i = 0; i < contents.length; i++) {
+                        contents[i].classList.remove('active');
+                    }
+                    
+                    // Atualizar tabs
+                    var tabs = document.getElementsByClassName('tab');
+                    for (var i = 0; i < tabs.length; i++) {
+                        tabs[i].classList.remove('active');
+                    }
+                    
+                    // Mostrar conteúdo selecionado
+                    document.getElementById(tabId).classList.add('active');
+                    
+                    // Atualizar tab
+                    event.currentTarget.classList.add('active');
+                }
+                
+                // Filtrar tabelas
+                function filterTable(tableId, inputId) {
+                    var input, filter, table, tr, td, i, j, txtValue, found;
+                    input = document.getElementById(inputId);
+                    filter = input.value.toUpperCase();
+                    table = document.getElementById(tableId);
+                    tr = table.getElementsByTagName("tr");
+                    
+                    for (i = 1; i < tr.length; i++) {
+                        found = false;
+                        td = tr[i].getElementsByTagName("td");
+                        
+                        for (j = 0; j < 3; j++) { // Filtrar apenas pelas primeiras 3 colunas (ID, Nome, Mês/Função)
+                            if (td[j]) {
+                                txtValue = td[j].textContent || td[j].innerText;
+                                if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (found) {
+                            tr[i].style.display = "";
+                        } else {
+                            tr[i].style.display = "none";
+                        }
+                    }
+                }
+                
+                // Destacar percentuais altos (> 10%)
+                document.addEventListener('DOMContentLoaded', function() {
                     const tables = document.querySelectorAll('table');
-                    tables.forEach(table => {{
+                    tables.forEach(table => {
                         const headerRow = table.querySelector('tr');
                         const headers = headerRow.querySelectorAll('th');
                         
-                        let percentColIndex = -1;
-                        for (let i = 0; i < headers.length; i++) {{
-                            if (headers[i].textContent.includes('Percentual CloudWatch')) {{
-                                percentColIndex = i;
-                                break;
-                            }}
-                        }}
-                        
-                        if (percentColIndex >= 0) {{
-                            const rows = table.querySelectorAll('tr');
-                            for (let i = 1; i < rows.length; i++) {{
-                                const cell = rows[i].querySelectorAll('td')[percentColIndex];
-                                const percentValue = parseFloat(cell.textContent);
-                                if (percentValue > 10) {{
-                                    cell.classList.add('high-percentage');
-                                }}
-                            }}
-                        }}
-                    }});
-                }});
+                        for (let i = 0; i < headers.length; i++) {
+                            if (headers[i].textContent.includes('% CloudWatch') || 
+                                headers[i].textContent.includes('% Config')) {
+                                const colIndex = i;
+                                
+                                const rows = table.querySelectorAll('tbody tr');
+                                for (let j = 0; j < rows.length; j++) {
+                                    const cell = rows[j].querySelectorAll('td')[colIndex];
+                                    const percentText = cell.textContent.trim();
+                                    const percentValue = parseFloat(percentText);
+                                    if (percentValue > 10) {
+                                        cell.classList.add('high-percentage');
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
             </script>
         </body>
         </html>
@@ -745,6 +1084,10 @@ def main():
                         help='Caminho para salvar o relatório Excel')
     parser.add_argument('--output-html', type=str, default='aws_cost_report.html',
                         help='Caminho para salvar o relatório HTML')
+    parser.add_argument('--account-filter', type=str,
+                        help='Filtrar contas por nome ou ID (aceita expressões regulares)')
+    parser.add_argument('--max-accounts', type=int,
+                        help='Número máximo de contas a processar (útil para testes)')
     
     args = parser.parse_args()
     
@@ -768,7 +1111,11 @@ def main():
     
     # Extrair custos de todas as contas
     print("Iniciando extração de custos da AWS...")
-    extractor.extract_all_accounts_cost(role_name_preference=args.preferred_roles)
+    extractor.extract_all_accounts_cost(
+        account_filter=args.account_filter,
+        max_accounts=args.max_accounts,
+        role_name_preference=args.preferred_roles
+    )
     
     # Gerar relatórios conforme solicitado
     if args.format in ['excel', 'both']:
@@ -782,3 +1129,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
