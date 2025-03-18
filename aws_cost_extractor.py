@@ -1275,7 +1275,7 @@ class AWSCostExtractor:
         
         # Gerar timestamp
         timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-
+        
         # Combinar tudo em um HTML
         html_content = f"""<!DOCTYPE html>
     <html lang="pt-br">
