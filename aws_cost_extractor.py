@@ -543,285 +543,281 @@ class AWSCostExtractor:
                 print(f"❌ Falha ao extrair dados para {account_name}")
         
         print(f"Extração concluída para {len(self.account_data)} de {total_accounts} contas.")
-    
-    import pandas as pd
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.formatting.rule import ColorScaleRule
 
-def generate_excel_report(self, output_path="aws_cost_report.xlsx", columns_order=None):
-    """
-    Gera um relatório Excel com os dados de custo extraídos.
-    
-    Args:
-        output_path: Caminho para salvar o arquivo Excel
-        columns_order: Lista com a ordem desejada das colunas (opcional)
-    """
-    if not self.account_data:
-        print("Sem dados para gerar relatório.")
-        return
-    
-    # Criar DataFrame para o resumo das contas
-    summary_data = []
-    for account in self.account_data:
-        row_data = {
-            'ID da Conta': account['account_id'],
-            'Nome da Conta': account['account_name'],
-            'Função': account['role_name'],
-            'Custo Total (USD)': account['total_3_months']
-        }
+
+    def generate_excel_report(self, output_path="aws_cost_report.xlsx", columns_order=None):
+        """
+        Gera um relatório Excel com os dados de custo extraídos.
         
-        # Adicionar colunas para cada serviço
-        for service_key in self.services.keys():
-            row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
-            if service_key in ['CloudWatch', 'Config']:
-                row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
+        Args:
+            output_path: Caminho para salvar o arquivo Excel
+            columns_order: Lista com a ordem desejada das colunas (opcional)
+        """
+        if not self.account_data:
+            print("Sem dados para gerar relatório.")
+            return
         
-        summary_data.append(row_data)
-    
-    summary_df = pd.DataFrame(summary_data)
-    
-    # Reordenar colunas se especificado
-    if columns_order:
-        available_columns = summary_df.columns.tolist()
-        # Verificar colunas válidas
-        valid_columns = [col for col in columns_order if col in available_columns]
-        # Adicionar colunas que não foram especificadas, mas estão disponíveis
-        remaining_columns = [col for col in available_columns if col not in valid_columns]
-        # Criar ordem final
-        final_order = valid_columns + remaining_columns
-        summary_df = summary_df[final_order]
-    
-    # Ordenar por custo total
-    summary_df = summary_df.sort_values('Custo Total (USD)', ascending=False)
-    
-    # Criar DataFrames separados para cada mês
-    monthly_data_by_month = {}
-    
-    # Obter todos os meses únicos em ordem cronológica
-    all_months = []
-    for account in self.account_data:
-        for month in account['months']:
-            if month not in all_months:
-                all_months.append(month)
-    
-    # Ordenar meses (formato 'Mmm/YYYY')
-    all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                                                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].index(x.split('/')[0])))
-    
-    # Inicializar dicionários para cada mês
-    for month in all_months:
-        monthly_data_by_month[month] = []
-    
-    # Preencher dados para cada mês
-    for account in self.account_data:
-        for i, month in enumerate(account['months']):
+        # Criar DataFrame para o resumo das contas
+        summary_data = []
+        for account in self.account_data:
             row_data = {
                 'ID da Conta': account['account_id'],
                 'Nome da Conta': account['account_name'],
-                'Custo Total (USD)': account['total_costs'][i]
+                'Função': account['role_name'],
+                'Custo Total (USD)': account['total_3_months']
             }
             
             # Adicionar colunas para cada serviço
             for service_key in self.services.keys():
-                row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
                 if service_key in ['CloudWatch', 'Config']:
-                    row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                    row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
             
-            monthly_data_by_month[month].append(row_data)
-    
-    # Criar DataFrames para cada mês
-    monthly_dfs = {}
-    for month, data in monthly_data_by_month.items():
-        df = pd.DataFrame(data)
+            summary_data.append(row_data)
+        
+        summary_df = pd.DataFrame(summary_data)
         
         # Reordenar colunas se especificado
         if columns_order:
-            available_columns = df.columns.tolist()
+            available_columns = summary_df.columns.tolist()
+            # Verificar colunas válidas
             valid_columns = [col for col in columns_order if col in available_columns]
+            # Adicionar colunas que não foram especificadas, mas estão disponíveis
             remaining_columns = [col for col in available_columns if col not in valid_columns]
+            # Criar ordem final
             final_order = valid_columns + remaining_columns
-            df = df[final_order]
+            summary_df = summary_df[final_order]
         
         # Ordenar por custo total
-        df = df.sort_values('Custo Total (USD)', ascending=False)
-        monthly_dfs[month] = df
-    
-    # Criar DataFrame para o detalhamento mensal tradicional (para manter compatibilidade)
-    monthly_data = []
-    for account in self.account_data:
-        for i, month in enumerate(account['months']):
-            row_data = {
-                'ID da Conta': account['account_id'],
-                'Nome da Conta': account['account_name'],
-                'Mês': month,
-                'Custo Total (USD)': account['total_costs'][i]
-            }
+        summary_df = summary_df.sort_values('Custo Total (USD)', ascending=False)
+        
+        # Criar DataFrames separados para cada mês
+        monthly_data_by_month = {}
+        
+        # Obter todos os meses únicos em ordem cronológica
+        all_months = []
+        for account in self.account_data:
+            for month in account['months']:
+                if month not in all_months:
+                    all_months.append(month)
+        
+        # Ordenar meses (formato 'Mmm/YYYY')
+        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                                                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].index(x.split('/')[0])))
+        
+        # Inicializar dicionários para cada mês
+        for month in all_months:
+            monthly_data_by_month[month] = []
+        
+        # Preencher dados para cada mês
+        for account in self.account_data:
+            for i, month in enumerate(account['months']):
+                row_data = {
+                    'ID da Conta': account['account_id'],
+                    'Nome da Conta': account['account_name'],
+                    'Custo Total (USD)': account['total_costs'][i]
+                }
+                
+                # Adicionar colunas para cada serviço
+                for service_key in self.services.keys():
+                    row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                    if service_key in ['CloudWatch', 'Config']:
+                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                
+                monthly_data_by_month[month].append(row_data)
+        
+        # Criar DataFrames para cada mês
+        monthly_dfs = {}
+        for month, data in monthly_data_by_month.items():
+            df = pd.DataFrame(data)
             
-            # Adicionar colunas para cada serviço
-            for service_key in self.services.keys():
-                row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                if service_key in ['CloudWatch', 'Config']:
-                    row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+            # Reordenar colunas se especificado
+            if columns_order:
+                available_columns = df.columns.tolist()
+                valid_columns = [col for col in columns_order if col in available_columns]
+                remaining_columns = [col for col in available_columns if col not in valid_columns]
+                final_order = valid_columns + remaining_columns
+                df = df[final_order]
             
-            monthly_data.append(row_data)
-    
-    monthly_df = pd.DataFrame(monthly_data)
-    
-    # Reordenar colunas se especificado (para o detalhamento mensal tradicional)
-    if columns_order and 'Mês' in monthly_df.columns:
-        # Garantir que 'Mês' esteja na posição certa
-        mes_index = columns_order.index('Mês') if 'Mês' in columns_order else 2
-        available_columns = monthly_df.columns.tolist()
-        valid_columns = [col for col in columns_order if col in available_columns]
+            # Ordenar por custo total
+            df = df.sort_values('Custo Total (USD)', ascending=False)
+            monthly_dfs[month] = df
         
-        # Adicionar 'Mês' se não estiver na lista
-        if 'Mês' not in valid_columns:
-            valid_columns.insert(mes_index, 'Mês')
+        # Criar DataFrame para o detalhamento mensal tradicional (para manter compatibilidade)
+        monthly_data = []
+        for account in self.account_data:
+            for i, month in enumerate(account['months']):
+                row_data = {
+                    'ID da Conta': account['account_id'],
+                    'Nome da Conta': account['account_name'],
+                    'Mês': month,
+                    'Custo Total (USD)': account['total_costs'][i]
+                }
+                
+                # Adicionar colunas para cada serviço
+                for service_key in self.services.keys():
+                    row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                    if service_key in ['CloudWatch', 'Config']:
+                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                
+                monthly_data.append(row_data)
+        
+        monthly_df = pd.DataFrame(monthly_data)
+        
+        # Reordenar colunas se especificado (para o detalhamento mensal tradicional)
+        if columns_order and 'Mês' in monthly_df.columns:
+            # Garantir que 'Mês' esteja na posição certa
+            mes_index = columns_order.index('Mês') if 'Mês' in columns_order else 2
+            available_columns = monthly_df.columns.tolist()
+            valid_columns = [col for col in columns_order if col in available_columns]
             
-        # Adicionar colunas que não foram especificadas
-        remaining_columns = [col for col in available_columns if col not in valid_columns]
-        final_order = valid_columns + remaining_columns
-        monthly_df = monthly_df[final_order]
-    
-    # Ordenar o detalhamento mensal tradicional
-    monthly_df = monthly_df.sort_values(['Nome da Conta', 'Mês'])
-    
-    # Criar arquivo Excel
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        summary_df.to_excel(writer, sheet_name='Resumo', index=False)
+            # Adicionar 'Mês' se não estiver na lista
+            if 'Mês' not in valid_columns:
+                valid_columns.insert(mes_index, 'Mês')
+                
+            # Adicionar colunas que não foram especificadas
+            remaining_columns = [col for col in available_columns if col not in valid_columns]
+            final_order = valid_columns + remaining_columns
+            monthly_df = monthly_df[final_order]
         
-        # Adicionar uma aba para cada mês
-        for month, df in monthly_dfs.items():
-            # Substituir caracteres inválidos em nomes de abas
-            sheet_name = month.replace('/', '-')
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        # Ordenar o detalhamento mensal tradicional
+        monthly_df = monthly_df.sort_values(['Nome da Conta', 'Mês'])
         
-        # Adicionar a aba de detalhamento mensal tradicional
-        monthly_df.to_excel(writer, sheet_name='Todos os Meses', index=False)
-        
-        # Formatar as planilhas
-        workbook = writer.book
-        
-        # Estilo padrão para as células
-        border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        
-        # Formatar a planilha de resumo
-        self._format_worksheet(
-            worksheet=writer.sheets['Resumo'],
-            df=summary_df,
-            border=border,
-            total_col_idx=summary_df.columns.get_loc('Custo Total (USD)'),
-            service_keys=self.services.keys()
-        )
-        
-        # Formatar as planilhas de cada mês
-        for month in monthly_dfs.keys():
-            sheet_name = month.replace('/', '-')
+        # Criar arquivo Excel
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, sheet_name='Resumo', index=False)
+            
+            # Adicionar uma aba para cada mês
+            for month, df in monthly_dfs.items():
+                # Substituir caracteres inválidos em nomes de abas
+                sheet_name = month.replace('/', '-')
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+            
+            # Adicionar a aba de detalhamento mensal tradicional
+            monthly_df.to_excel(writer, sheet_name='Todos os Meses', index=False)
+            
+            # Formatar as planilhas
+            workbook = writer.book
+            
+            # Estilo padrão para as células
+            border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            # Formatar a planilha de resumo
             self._format_worksheet(
-                worksheet=writer.sheets[sheet_name],
-                df=monthly_dfs[month],
+                worksheet=writer.sheets['Resumo'],
+                df=summary_df,
                 border=border,
-                total_col_idx=monthly_dfs[month].columns.get_loc('Custo Total (USD)'),
+                total_col_idx=summary_df.columns.get_loc('Custo Total (USD)'),
                 service_keys=self.services.keys()
             )
+            
+            # Formatar as planilhas de cada mês
+            for month in monthly_dfs.keys():
+                sheet_name = month.replace('/', '-')
+                self._format_worksheet(
+                    worksheet=writer.sheets[sheet_name],
+                    df=monthly_dfs[month],
+                    border=border,
+                    total_col_idx=monthly_dfs[month].columns.get_loc('Custo Total (USD)'),
+                    service_keys=self.services.keys()
+                )
+            
+            # Formatar a planilha de todos os meses
+            self._format_worksheet(
+                worksheet=writer.sheets['Todos os Meses'],
+                df=monthly_df,
+                border=border,
+                total_col_idx=monthly_df.columns.get_loc('Custo Total (USD)'),
+                service_keys=self.services.keys()
+            )
+            
+            # Adicionar filtros a todas as planilhas
+            for sheet_name in workbook.sheetnames:
+                workbook[sheet_name].auto_filter.ref = workbook[sheet_name].dimensions
         
-        # Formatar a planilha de todos os meses
-        self._format_worksheet(
-            worksheet=writer.sheets['Todos os Meses'],
-            df=monthly_df,
-            border=border,
-            total_col_idx=monthly_df.columns.get_loc('Custo Total (USD)'),
-            service_keys=self.services.keys()
-        )
-        
-        # Adicionar filtros a todas as planilhas
-        for sheet_name in workbook.sheetnames:
-            workbook[sheet_name].auto_filter.ref = workbook[sheet_name].dimensions
-    
-    print(f"Relatório Excel gerado com sucesso: {output_path}")
+        print(f"Relatório Excel gerado com sucesso: {output_path}")
 
 
-def _format_worksheet(self, worksheet, df, border, total_col_idx, service_keys):
-    """
-    Formata uma planilha Excel.
-    
-    Args:
-        worksheet: Planilha a ser formatada
-        df: DataFrame com os dados
-        border: Estilo de borda
-        total_col_idx: Índice da coluna de custo total
-        service_keys: Lista de chaves dos serviços
-    """
-    # Definir largura das colunas
-    for idx, col in enumerate(df.columns):
-        column_width = max(len(col) + 2, df[col].astype(str).map(len).max() + 2)
-        column_width = min(column_width, 40)  # Limitar largura máxima
-        worksheet.column_dimensions[get_column_letter(idx + 1)].width = column_width
-    
-    # Formatar todas as células com borda
-    for row in range(1, len(df) + 2):
+    def _format_worksheet(self, worksheet, df, border, total_col_idx, service_keys):
+        """
+        Formata uma planilha Excel.
+        
+        Args:
+            worksheet: Planilha a ser formatada
+            df: DataFrame com os dados
+            border: Estilo de borda
+            total_col_idx: Índice da coluna de custo total
+            service_keys: Lista de chaves dos serviços
+        """
+        # Definir largura das colunas
+        for idx, col in enumerate(df.columns):
+            column_width = max(len(col) + 2, df[col].astype(str).map(len).max() + 2)
+            column_width = min(column_width, 40)  # Limitar largura máxima
+            worksheet.column_dimensions[get_column_letter(idx + 1)].width = column_width
+        
+        # Formatar todas as células com borda
+        for row in range(1, len(df) + 2):
+            for col in range(1, len(df.columns) + 1):
+                cell = worksheet.cell(row=row, column=col)
+                cell.border = border
+        
+        # Formatar células numéricas
+        for row in range(2, len(df) + 2):
+            # Formatar custo total
+            total_col = total_col_idx + 1  # Ajuste para indexação base-1 do openpyxl
+            worksheet.cell(row=row, column=total_col).number_format = '$#,##0.00'
+            
+            # Formatar colunas de serviços
+            for col_idx, col_name in enumerate(df.columns, 1):
+                if ' (USD)' in col_name:
+                    worksheet.cell(row=row, column=col_idx).number_format = '$#,##0.00'
+                elif '% ' in col_name:
+                    percent_cell = worksheet.cell(row=row, column=col_idx)
+                    percent_cell.number_format = '0.00%'
+                    
+                    # Destacar percentuais altos (> 10%)
+                    percentage = percent_cell.value
+                    if percentage and percentage > 10:
+                        percent_cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+        
+        # Formatar cabeçalhos
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        
         for col in range(1, len(df.columns) + 1):
-            cell = worksheet.cell(row=row, column=col)
-            cell.border = border
-    
-    # Formatar células numéricas
-    for row in range(2, len(df) + 2):
-        # Formatar custo total
-        total_col = total_col_idx + 1  # Ajuste para indexação base-1 do openpyxl
-        worksheet.cell(row=row, column=total_col).number_format = '$#,##0.00'
+            cell = worksheet.cell(row=1, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
         
-        # Formatar colunas de serviços
+        # Congelar primeira linha
+        worksheet.freeze_panes = 'A2'
+        
+        # Adicionar regras de formatação condicional
+        # Destacar valores maiores em tons mais escuros de azul para colunas de custo
+        cost_columns = []
         for col_idx, col_name in enumerate(df.columns, 1):
             if ' (USD)' in col_name:
-                worksheet.cell(row=row, column=col_idx).number_format = '$#,##0.00'
-            elif '% ' in col_name:
-                percent_cell = worksheet.cell(row=row, column=col_idx)
-                percent_cell.number_format = '0.00%'
-                
-                # Destacar percentuais altos (> 10%)
-                percentage = percent_cell.value
-                if percentage and percentage > 10:
-                    percent_cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-    
-    # Formatar cabeçalhos
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    
-    for col in range(1, len(df.columns) + 1):
-        cell = worksheet.cell(row=1, column=col)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-    
-    # Congelar primeira linha
-    worksheet.freeze_panes = 'A2'
-    
-    # Adicionar regras de formatação condicional
-    # Destacar valores maiores em tons mais escuros de azul para colunas de custo
-    cost_columns = []
-    for col_idx, col_name in enumerate(df.columns, 1):
-        if ' (USD)' in col_name:
-            cost_columns.append(col_idx)
-    
-    for col_idx in cost_columns:
-        col_letter = get_column_letter(col_idx)
-        max_row = len(df) + 1
-        worksheet.conditional_formatting.add(
-            f'{col_letter}2:{col_letter}{max_row}',
-            ColorScaleRule(
-                start_type='min',
-                start_color='EBEDF0',
-                end_type='max',
-                end_color='4472C4'
+                cost_columns.append(col_idx)
+        
+        for col_idx in cost_columns:
+            col_letter = get_column_letter(col_idx)
+            max_row = len(df) + 1
+            worksheet.conditional_formatting.add(
+                f'{col_letter}2:{col_letter}{max_row}',
+                ColorScaleRule(
+                    start_type='min',
+                    start_color='EBEDF0',
+                    end_type='max',
+                    end_color='4472C4'
+                )
             )
-        )
     
     def generate_html_report(self, output_path="aws_cost_report.html", columns_order=None):
         """
