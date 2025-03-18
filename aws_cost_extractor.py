@@ -300,17 +300,8 @@ class AWSCostExtractor:
         self.sso_auth = sso_auth
         self.access_token = access_token
         self.account_data = []
-        
-        # Serviços a serem analisados
-        self.services = {
-            'CloudWatch': 'AmazonCloudWatch',
-            'DynamoDB': 'Amazon DynamoDB',
-            'RDS': 'Amazon Relational Database Service',
-            'Config': 'AWS Config',
-            'ECS': 'Amazon Elastic Container Service',
-            'EC2': 'Amazon Elastic Compute Cloud - Compute'
-        }
-        
+        self.top_services = {}  # Dicionário para armazenar os top serviços
+
     def get_cost_data(self, account_id, account_name, role_name):
         """
         Obtém dados de custo para uma conta específica.
@@ -367,61 +358,117 @@ class AWSCostExtractor:
                 amount = float(result['Total']['UnblendedCost']['Amount'])
                 total_costs.append(amount)
             
-            # Dicionário para armazenar custos de cada serviço
+            # Obter os top 10 serviços por custo
+            top_services_response = cost_explorer.get_cost_and_usage(
+                TimePeriod={
+                    'Start': start_str,
+                    'End': end_str
+                },
+                Granularity='MONTHLY',
+                GroupBy=[
+                    {
+                        'Type': 'DIMENSION',
+                        'Key': 'SERVICE'
+                    }
+                ],
+                Metrics=['UnblendedCost']
+            )
+            
+            # Processar resultados por serviço
+            service_total_costs = {}
+            
+            # Calcular o custo total para cada serviço em todos os meses
+            for result in top_services_response['ResultsByTime']:
+                for group in result['Groups']:
+                    service_name = group['Keys'][0]
+                    amount = float(group['Metrics']['UnblendedCost']['Amount'])
+                    
+                    if service_name in service_total_costs:
+                        service_total_costs[service_name] += amount
+                    else:
+                        service_total_costs[service_name] = amount
+            
+            # Ordenar serviços por custo total e pegar os top 10
+            sorted_services = sorted(service_total_costs.items(), key=lambda x: x[1], reverse=True)
+            top_10_services = sorted_services[:10]
+            
+            # Adicionar ao dicionário de top serviços global
+            for service_name, cost in top_10_services:
+                if service_name in self.top_services:
+                    self.top_services[service_name] += cost
+                else:
+                    self.top_services[service_name] = cost
+            
+            # Criar mapeamento de nomes AWS para nomes amigáveis
+            service_name_mapping = {}
+            for service_name, _ in top_10_services:
+                # Extrair nome mais curto para serviços da AWS
+                if service_name.startswith('Amazon '):
+                    short_name = service_name.replace('Amazon ', '')
+                elif service_name.startswith('AWS '):
+                    short_name = service_name.replace('AWS ', '')
+                else:
+                    short_name = service_name
+                
+                # Abreviar mais se o nome ainda for muito longo
+                if len(short_name) > 20:
+                    words = short_name.split()
+                    if len(words) > 1:
+                        short_name = ''.join([w[0] for w in words if w[0].isupper()])
+                        if len(short_name) < 2:  # Se não tiver iniciais suficientes
+                            short_name = short_name + words[-1]
+                
+                service_name_mapping[service_name] = short_name
+            
+            # Mapear serviços de top 10 para análise mensal
+            top_10_service_keys = [service_name_mapping[name] for name, _ in top_10_services]
+            top_10_service_names = [name for name, _ in top_10_services]
+            
+            # Dicionário para armazenar custos de cada serviço por mês
             service_costs = {}
             service_percentages = {}
             
-            # Obter custo de cada serviço
-            for service_key, service_name in self.services.items():
-                try:
-                    service_response = cost_explorer.get_cost_and_usage(
-                        TimePeriod={
-                            'Start': start_str,
-                            'End': end_str
-                        },
-                        Granularity='MONTHLY',
-                        Filter={
-                            "Dimensions": {
-                                "Key": "SERVICE",
-                                "Values": [service_name]
-                            }
-                        },
-                        Metrics=['UnblendedCost']
-                    )
-                    
-                    # Processar resultados do serviço
-                    service_monthly_costs = []
-                    
-                    # Alinhar os resultados com os meses
-                    for start_date in month_start_dates:
-                        found = False
-                        for result in service_response['ResultsByTime']:
-                            if result['TimePeriod']['Start'] == start_date:
-                                if 'Total' in result and 'UnblendedCost' in result['Total']:
-                                    amount = float(result['Total']['UnblendedCost']['Amount'])
-                                else:
-                                    amount = 0.0
-                                service_monthly_costs.append(amount)
-                                found = True
-                                break
-                        if not found:
-                            service_monthly_costs.append(0.0)
-                    
-                    service_costs[service_key] = service_monthly_costs
-                    
-                except Exception as e:
-                    print(f"Erro ao obter dados do serviço {service_name} para a conta {account_id}: {str(e)}")
-                    service_costs[service_key] = [0.0] * len(months)
+            # Inicializar dicionários para serviços
+            for i, service_key in enumerate(top_10_service_keys):
+                service_costs[service_key] = [0.0] * len(months)
+                service_percentages[service_key] = [0.0] * len(months)
             
-            # Calcular percentuais para cada serviço
-            for service_key in self.services.keys():
-                service_percentages[service_key] = []
-                for i, total in enumerate(total_costs):
-                    if total > 0:
-                        percentage = (service_costs[service_key][i] / total) * 100
-                    else:
-                        percentage = 0.0
-                    service_percentages[service_key].append(percentage)
+            # Para cada mês, obter os custos por serviço
+            for month_idx, start_date in enumerate(month_start_dates):
+                # Obter detalhes do mês
+                month_response = cost_explorer.get_cost_and_usage(
+                    TimePeriod={
+                        'Start': start_date,
+                        'End': (datetime.datetime.strptime(start_date, '%Y-%m-%d') + 
+                                relativedelta(months=1)).strftime('%Y-%m-%d')
+                    },
+                    Granularity='MONTHLY',
+                    GroupBy=[
+                        {
+                            'Type': 'DIMENSION',
+                            'Key': 'SERVICE'
+                        }
+                    ],
+                    Metrics=['UnblendedCost']
+                )
+                
+                # Processar serviços para este mês
+                for group in month_response['ResultsByTime'][0]['Groups']:
+                    service_name = group['Keys'][0]
+                    amount = float(group['Metrics']['UnblendedCost']['Amount'])
+                    
+                    # Se o serviço está nos top 10, armazenar seu custo
+                    if service_name in top_10_service_names:
+                        service_idx = top_10_service_names.index(service_name)
+                        service_key = top_10_service_keys[service_idx]
+                        service_costs[service_key][month_idx] = amount
+                        
+                        # Calcular percentual se houver custo total
+                        if total_costs[month_idx] > 0:
+                            percentage = (amount / total_costs[month_idx]) * 100
+                        else:
+                            percentage = 0.0
+                        service_percentages[service_key][month_idx] = percentage
             
             # Calcular totais para os 3 meses
             total_3_months = sum(total_costs)
@@ -429,7 +476,7 @@ class AWSCostExtractor:
             service_totals = {}
             service_total_percentages = {}
             
-            for service_key in self.services.keys():
+            for i, service_key in enumerate(top_10_service_keys):
                 service_total = sum(service_costs[service_key])
                 service_totals[service_key] = service_total
                 
@@ -451,7 +498,10 @@ class AWSCostExtractor:
                 'service_percentages': service_percentages,
                 'total_3_months': total_3_months,
                 'service_totals': service_totals,
-                'service_total_percentages': service_total_percentages
+                'service_total_percentages': service_total_percentages,
+                'service_name_mapping': service_name_mapping,
+                'top_10_service_keys': top_10_service_keys,
+                'top_10_service_names': top_10_service_names
             }
             
         except Exception as e:
@@ -543,6 +593,277 @@ class AWSCostExtractor:
                 print(f"❌ Falha ao extrair dados para {account_name}")
         
         print(f"Extração concluída para {len(self.account_data)} de {total_accounts} contas.")
+        
+        # Determinar os top 10 serviços globais após analisar todas as contas
+        self.determine_top_global_services()
+
+    def determine_top_global_services(self):
+        """
+        Determina os top 10 serviços com base no gasto total de todas as contas analisadas.
+        """
+        if not self.top_services:
+            print("Sem dados para determinar os top serviços globais.")
+            return
+        
+        # Ordenar serviços por custo total e pegar os top 10
+        sorted_services = sorted(self.top_services.items(), key=lambda x: x[1], reverse=True)
+        top_10_global_services = sorted_services[:10]
+        
+        # Criar mapeamento para nomes mais amigáveis
+        self.global_service_mapping = {}
+        self.global_service_short_names = []
+        self.global_service_full_names = []
+        
+        for service_name, cost in top_10_global_services:
+            # Extrair nome mais curto para serviços da AWS
+            if service_name.startswith('Amazon '):
+                short_name = service_name.replace('Amazon ', '')
+            elif service_name.startswith('AWS '):
+                short_name = service_name.replace('AWS ', '')
+            else:
+                short_name = service_name
+            
+            # Abreviar mais se o nome ainda for muito longo
+            if len(short_name) > 20:
+                words = short_name.split()
+                if len(words) > 1:
+                    short_name = ''.join([w[0] for w in words if w[0].isupper()])
+                    if len(short_name) < 2:  # Se não tiver iniciais suficientes
+                        short_name = short_name + words[-1]
+            
+            self.global_service_mapping[service_name] = short_name
+            self.global_service_short_names.append(short_name)
+            self.global_service_full_names.append(service_name)
+        
+        print(f"Top 10 serviços globais determinados: {', '.join(self.global_service_short_names)}")
+    
+    def _prepare_excel_data(self):
+        """
+        Prepara os dados para o relatório Excel.
+        
+        Returns:
+            tuple: (summary_df, monthly_dfs, all_monthly_df) - DataFrames para as diferentes abas do Excel
+        """
+        if not self.account_data:
+            print("Sem dados para gerar relatório.")
+            return None, None, None
+        
+        if not hasattr(self, 'global_service_short_names'):
+            self.determine_top_global_services()
+        
+        # Criar DataFrame para o resumo das contas
+        summary_data = []
+        for account in self.account_data:
+            row_data = {
+                'ID da Conta': account['account_id'],
+                'Nome da Conta': account['account_name'],
+                'Função': account['role_name'],
+                'Custo Total (USD)': account['total_3_months']
+            }
+            
+            # Adicionar colunas para cada serviço global top 10
+            for service_idx, service_key in enumerate(self.global_service_short_names):
+                # Verificar se este serviço específico tem dados nesta conta
+                if service_key in account['service_totals']:
+                    row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
+                    row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
+                else:
+                    # Se este serviço não tem dados para esta conta, definir como 0
+                    row_data[f'{service_key} (USD)'] = 0.0
+                    row_data[f'% {service_key}'] = 0.0
+            
+            summary_data.append(row_data)
+        
+        summary_df = pd.DataFrame(summary_data)
+        
+        # Ordem das colunas prefixadas
+        prefixed_columns = ['ID da Conta', 'Nome da Conta', 'Função', 'Custo Total (USD)']
+        
+        # Ordenar serviços por gasto total
+        service_columns = []
+        for service_key in self.global_service_short_names:
+            service_columns.append(f'{service_key} (USD)')
+            service_columns.append(f'% {service_key}')
+        
+        # Ordem final das colunas
+        all_columns = prefixed_columns + service_columns
+        
+        # Ajustar DataFrame do resumo para a ordem final
+        for col in all_columns:
+            if col not in summary_df.columns:
+                summary_df[col] = 0.0  # Criar coluna vazia se não existir
+        
+        summary_df = summary_df[all_columns]
+        
+        # Ordenar por custo total
+        summary_df = summary_df.sort_values('Custo Total (USD)', ascending=False)
+        
+        # Obter todos os meses únicos em ordem cronológica
+        all_months = []
+        for account in self.account_data:
+            for month in account['months']:
+                if month not in all_months:
+                    all_months.append(month)
+        
+        # Ordenar meses (formato 'Mmm/YYYY')
+        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].index(x.split('/')[0])))
+        
+        # Criar DataFrames para cada mês
+        monthly_dfs = {}
+        
+        for month in all_months:
+            monthly_data = []
+            
+            for account in self.account_data:
+                if month in account['months']:
+                    i = account['months'].index(month)
+                    
+                    row_data = {
+                        'ID da Conta': account['account_id'],
+                        'Nome da Conta': account['account_name'],
+                        'Custo Total (USD)': account['total_costs'][i]
+                    }
+                    
+                    # Adicionar colunas para cada serviço global top 10
+                    for service_idx, service_key in enumerate(self.global_service_short_names):
+                        # Verificar se este serviço específico tem dados nesta conta
+                        if service_key in account['service_costs']:
+                            row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                            row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                        else:
+                            # Se este serviço não tem dados para esta conta, definir como 0
+                            row_data[f'{service_key} (USD)'] = 0.0
+                            row_data[f'% {service_key}'] = 0.0
+                    
+                    monthly_data.append(row_data)
+            
+            df = pd.DataFrame(monthly_data)
+            
+            # Ajustar DataFrame do mês para a ordem final
+            for col in all_columns:
+                if col not in df.columns and col != 'Função':  # Função não está presente nas visões mensais
+                    df[col] = 0.0
+            
+            # Ajustar ordem das colunas para a visão mensal (sem Função)
+            month_columns = [col for col in all_columns if col != 'Função']
+            df = df[month_columns]
+            
+            # Ordenar por custo total
+            df = df.sort_values('Custo Total (USD)', ascending=False)
+            monthly_dfs[month] = df
+        
+        # Criar DataFrame para todos os meses (vista tradicional)
+        all_monthly_data = []
+        for account in self.account_data:
+            for i, month in enumerate(account['months']):
+                row_data = {
+                    'ID da Conta': account['account_id'],
+                    'Nome da Conta': account['account_name'],
+                    'Mês': month,
+                    'Custo Total (USD)': account['total_costs'][i]
+                }
+                
+                # Adicionar colunas para cada serviço global top 10
+                for service_idx, service_key in enumerate(self.global_service_short_names):
+                    # Verificar se este serviço específico tem dados nesta conta
+                    if service_key in account['service_costs']:
+                        row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
+                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
+                    else:
+                        # Se este serviço não tem dados para esta conta, definir como 0
+                        row_data[f'{service_key} (USD)'] = 0.0
+                        row_data[f'% {service_key}'] = 0.0
+                
+                all_monthly_data.append(row_data)
+        
+        all_monthly_df = pd.DataFrame(all_monthly_data)
+        
+        # Ordem das colunas para visão de todos os meses
+        monthly_prefixed_columns = ['ID da Conta', 'Nome da Conta', 'Mês', 'Custo Total (USD)']
+        all_monthly_columns = monthly_prefixed_columns + service_columns
+        
+        # Ajustar DataFrame de todos os meses para a ordem final
+        for col in all_monthly_columns:
+            if col not in all_monthly_df.columns:
+                all_monthly_df[col] = 0.0
+        
+        all_monthly_df = all_monthly_df[all_monthly_columns]
+        
+        # Ordenar por conta e mês
+        all_monthly_df = all_monthly_df.sort_values(['Nome da Conta', 'Mês'])
+        
+        return summary_df, monthly_dfs, all_monthly_df
+
+    def generate_excel_report(self, output_path="aws_cost_report.xlsx"):
+        """
+        Gera um relatório Excel com os dados de custo extraídos.
+        
+        Args:
+            output_path: Caminho para salvar o arquivo Excel
+        """
+        summary_df, monthly_dfs, all_monthly_df = self._prepare_excel_data()
+        
+        if summary_df is None:
+            return
+        
+        # Criar arquivo Excel
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, sheet_name='Resumo', index=False)
+            
+            # Adicionar uma aba para cada mês
+            for month, df in monthly_dfs.items():
+                # Substituir caracteres inválidos em nomes de abas
+                sheet_name = month.replace('/', '-')
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+            
+            # Adicionar a aba de detalhamento mensal tradicional
+            all_monthly_df.to_excel(writer, sheet_name='Todos os Meses', index=False)
+            
+            # Formatar as planilhas
+            workbook = writer.book
+            
+            # Estilo padrão para as células
+            border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            # Formatar a planilha de resumo
+            self._format_worksheet(
+                worksheet=writer.sheets['Resumo'],
+                df=summary_df,
+                border=border,
+                total_col_idx=summary_df.columns.get_loc('Custo Total (USD)'),
+                service_keys=self.global_service_short_names
+            )
+            
+            # Formatar as planilhas de cada mês
+            for month in monthly_dfs.keys():
+                sheet_name = month.replace('/', '-')
+                self._format_worksheet(
+                    worksheet=writer.sheets[sheet_name],
+                    df=monthly_dfs[month],
+                    border=border,
+                    total_col_idx=monthly_dfs[month].columns.get_loc('Custo Total (USD)'),
+                    service_keys=self.global_service_short_names
+                )
+            
+            # Formatar a planilha de todos os meses
+            self._format_worksheet(
+                worksheet=writer.sheets['Todos os Meses'],
+                df=all_monthly_df,
+                border=border,
+                total_col_idx=all_monthly_df.columns.get_loc('Custo Total (USD)'),
+                service_keys=self.global_service_short_names
+            )
+            
+            # Adicionar filtros a todas as planilhas
+            for sheet_name in workbook.sheetnames:
+                workbook[sheet_name].auto_filter.ref = workbook[sheet_name].dimensions
+        
+        print(f"Relatório Excel gerado com sucesso: {output_path}")
 
 
     def generate_excel_report(self, output_path="aws_cost_report.xlsx", columns_order=None):
@@ -818,140 +1139,17 @@ class AWSCostExtractor:
                 )
             )
     
-    def generate_html_report(self, output_path="aws_cost_report.html", columns_order=None):
+    def generate_html_report(self, output_path="aws_cost_report.html"):
         """
         Gera um relatório HTML com os dados de custo extraídos.
         
         Args:
             output_path: Caminho para salvar o arquivo HTML
-            columns_order: Lista com a ordem desejada das colunas (opcional)
         """
-        if not self.account_data:
-            print("Sem dados para gerar relatório.")
+        summary_df, monthly_dfs, all_monthly_df = self._prepare_excel_data()
+        
+        if summary_df is None:
             return
-        
-        # Criar DataFrame para o resumo das contas
-        summary_data = []
-        for account in self.account_data:
-            row_data = {
-                'ID da Conta': account['account_id'],
-                'Nome da Conta': account['account_name'],
-                'Função': account['role_name'],
-                'Custo Total (USD)': account['total_3_months']
-            }
-            
-            # Adicionar colunas para cada serviço
-            for service_key in self.services.keys():
-                row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
-                if service_key in ['CloudWatch', 'Config']:
-                    row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
-            
-            summary_data.append(row_data)
-        
-        summary_df = pd.DataFrame(summary_data)
-        
-        # Reordenar colunas se especificado
-        if columns_order:
-            available_columns = summary_df.columns.tolist()
-            # Verificar colunas válidas
-            valid_columns = [col for col in columns_order if col in available_columns]
-            # Adicionar colunas que não foram especificadas, mas estão disponíveis
-            remaining_columns = [col for col in available_columns if col not in valid_columns]
-            # Criar ordem final
-            final_order = valid_columns + remaining_columns
-            summary_df = summary_df[final_order]
-        
-        # Obter todos os meses únicos em ordem cronológica
-        all_months = []
-        for account in self.account_data:
-            for month in account['months']:
-                if month not in all_months:
-                    all_months.append(month)
-        
-        # Ordenar meses (formato 'Mmm/YYYY')
-        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'].index(x.split('/')[0])))
-        
-        # Criar DataFrames para cada mês
-        monthly_dfs = {}
-        
-        for month in all_months:
-            monthly_data = []
-            
-            for account in self.account_data:
-                if month in account['months']:
-                    i = account['months'].index(month)
-                    
-                    row_data = {
-                        'ID da Conta': account['account_id'],
-                        'Nome da Conta': account['account_name'],
-                        'Custo Total (USD)': account['total_costs'][i]
-                    }
-                    
-                    # Adicionar colunas para cada serviço
-                    for service_key in self.services.keys():
-                        row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                        if service_key in ['CloudWatch', 'Config']:
-                            row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
-                    
-                    monthly_data.append(row_data)
-            
-            df = pd.DataFrame(monthly_data)
-            
-            # Reordenar colunas se especificado
-            if columns_order:
-                available_columns = df.columns.tolist()
-                valid_columns = [col for col in columns_order if col in available_columns]
-                remaining_columns = [col for col in available_columns if col not in valid_columns]
-                final_order = valid_columns + remaining_columns
-                df = df[final_order]
-            
-            # Ordenar por custo total
-            df = df.sort_values('Custo Total (USD)', ascending=False)
-            monthly_dfs[month] = df
-        
-        # Criar DataFrame para todos os meses (vista tradicional)
-        all_monthly_data = []
-        for account in self.account_data:
-            for i, month in enumerate(account['months']):
-                row_data = {
-                    'ID da Conta': account['account_id'],
-                    'Nome da Conta': account['account_name'],
-                    'Mês': month,
-                    'Custo Total (USD)': account['total_costs'][i]
-                }
-                
-                # Adicionar colunas para cada serviço
-                for service_key in self.services.keys():
-                    row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                    if service_key in ['CloudWatch', 'Config']:
-                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
-                
-                all_monthly_data.append(row_data)
-        
-        all_monthly_df = pd.DataFrame(all_monthly_data)
-        
-        # Reordenar colunas se especificado
-        if columns_order and len(all_monthly_df) > 0:
-            available_columns = all_monthly_df.columns.tolist()
-            # Garantir que 'Mês' esteja na posição certa
-            if 'Mês' in available_columns:
-                mes_index = columns_order.index('Mês') if 'Mês' in columns_order else 2
-                valid_columns = [col for col in columns_order if col in available_columns]
-                
-                # Adicionar 'Mês' se não estiver na lista
-                if 'Mês' not in valid_columns:
-                    valid_columns.insert(mes_index, 'Mês')
-                    
-                # Adicionar colunas que não foram especificadas, mas estão disponíveis
-                remaining_columns = [col for col in available_columns if col not in valid_columns]
-                final_order = valid_columns + remaining_columns
-                all_monthly_df = all_monthly_df[final_order]
-        
-        # Ordenar por conta e mês
-        all_monthly_df = all_monthly_df.sort_values(['Nome da Conta', 'Mês'])
-        
-        # Ordenar o DataFrame de resumo por custo total
-        summary_df = summary_df.sort_values('Custo Total (USD)', ascending=False)
         
         # Formatar os dados para exibição HTML
         summary_df_display = summary_df.copy()
@@ -964,11 +1162,13 @@ class AWSCostExtractor:
         summary_df_display['Custo Total (USD)'] = summary_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
         all_monthly_df_display['Custo Total (USD)'] = all_monthly_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
         
-        for service_key in self.services.keys():
-            summary_df_display[f'{service_key} (USD)'] = summary_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
-            all_monthly_df_display[f'{service_key} (USD)'] = all_monthly_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+        # Formatar valores para serviços top 10
+        for service_key in self.global_service_short_names:
+            if f'{service_key} (USD)' in summary_df_display.columns:
+                summary_df_display[f'{service_key} (USD)'] = summary_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+                all_monthly_df_display[f'{service_key} (USD)'] = all_monthly_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
             
-            if service_key in ['CloudWatch', 'Config']:
+            if f'% {service_key}' in summary_df_display.columns:
                 summary_df_display[f'% {service_key}'] = summary_df_display[f'% {service_key}'].map('{:.2f}%'.format)
                 all_monthly_df_display[f'% {service_key}'] = all_monthly_df_display[f'% {service_key}'].map('{:.2f}%'.format)
         
@@ -977,22 +1177,26 @@ class AWSCostExtractor:
             df_display = df.copy()
             df_display['Custo Total (USD)'] = df_display['Custo Total (USD)'].map('${:,.2f}'.format)
             
-            for service_key in self.services.keys():
-                df_display[f'{service_key} (USD)'] = df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+            for service_key in self.global_service_short_names:
+                if f'{service_key} (USD)' in df_display.columns:
+                    df_display[f'{service_key} (USD)'] = df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
                 
-                if service_key in ['CloudWatch', 'Config']:
+                if f'% {service_key}' in df_display.columns:
                     df_display[f'% {service_key}'] = df_display[f'% {service_key}'].map('{:.2f}%'.format)
             
             monthly_dfs_display[month] = df_display
         
-        # Gerar cabeçalhos de tabela
-        summary_headers = ''.join([f'<th>{col}</th>' for col in summary_df_display.columns])
-        all_monthly_headers = ''.join([f'<th>{col}</th>' for col in all_monthly_df_display.columns])
+        # Obter todos os meses únicos em ordem cronológica
+        all_months = list(monthly_dfs.keys())
+        
+        # Gerar cabeçalhos de tabela com atributos para ordenação
+        summary_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in summary_df_display.columns])
+        all_monthly_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in all_monthly_df_display.columns])
         
         # Dicionário para armazenar cabeçalhos mensais
         monthly_headers = {}
         for month, df_display in monthly_dfs_display.items():
-            monthly_headers[month] = ''.join([f'<th>{col}</th>' for col in df_display.columns])
+            monthly_headers[month] = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in df_display.columns])
         
         # Gerar linhas da tabela de resumo
         summary_rows = []
@@ -1042,7 +1246,7 @@ class AWSCostExtractor:
             month_contents.append(f'''
             <div id="month-{month_id}" class="month-content" style="display: {display_style};">
                 <div style="overflow-x: auto;">
-                    <table id="table-{month_id}">
+                    <table id="table-{month_id}" class="sortable-table">
                         <thead>
                             <tr>
                                 {monthly_headers[month]}
@@ -1058,14 +1262,20 @@ class AWSCostExtractor:
         
         # Gerar legenda de serviços
         service_legend = []
-        for service_key in self.services.keys():
+        for service_key in self.global_service_short_names:
             color = f'#{abs(hash(service_key)) % 0xffffff:06x}'
             service_legend.append(f'<div class="service-item"><div class="service-color" style="background-color: {color}"></div>{service_key}</div>')
         service_legend_html = ''.join(service_legend)
         
+        # Gerar resumo dos top serviços
+        top_services_summary = []
+        for i, service_key in enumerate(self.global_service_short_names):
+            top_services_summary.append(f'<li>{i+1}. {service_key}</li>')
+        top_services_summary_html = '<ol>' + ''.join(top_services_summary) + '</ol>'
+        
         # Gerar timestamp
         timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-        
+
         # Combinar tudo em um HTML
         html_content = f"""<!DOCTYPE html>
     <html lang="pt-br">
@@ -1104,6 +1314,19 @@ class AWSCostExtractor:
                 position: sticky;
                 top: 0;
                 z-index: 10;
+                cursor: pointer;
+            }}
+            th.sortable:hover {{
+                background-color: #0055aa;
+            }}
+            th.sortable:after {{
+                content: "\\00a0\\00a0\\00a0"; /* Espaço para o ícone de ordenação */
+            }}
+            th.sort-asc:after {{
+                content: "\\2191"; /* Seta para cima */
+            }}
+            th.sort-desc:after {{
+                content: "\\2193"; /* Seta para baixo */
             }}
             tr:nth-child(even) {{
                 background-color: #f5f5f5;
@@ -1226,11 +1449,19 @@ class AWSCostExtractor:
                 font-weight: bold;
                 color: #0066cc;
             }}
-            .month-selector {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 10px;
+            .top-services {{
+                background-color: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
                 margin-bottom: 20px;
+                border-left: 4px solid #0066cc;
+            }}
+            .top-services ol {{
+                margin: 10px 0 0 20px;
+                padding: 0;
+            }}
+            .top-services li {{
+                margin-bottom: 5px;
             }}
         </style>
     </head>
@@ -1242,6 +1473,12 @@ class AWSCostExtractor:
             <div class="summary">
                 <h2>Resumo dos Últimos 3 Meses</h2>
                 <p>Total de Contas Analisadas: {len(summary_df)}</p>
+            </div>
+            
+            <div class="top-services">
+                <h3>Top 10 Serviços por Custo:</h3>
+                {top_services_summary_html}
+                <p><small>Nota: As colunas de serviços estão ordenadas da esquerda para a direita por custo total.</small></p>
             </div>
             
             <div class="tabs">
@@ -1261,7 +1498,7 @@ class AWSCostExtractor:
                 </div>
                 
                 <div style="overflow-x: auto;">
-                    <table id="resumoTable">
+                    <table id="resumoTable" class="sortable-table">
                         <thead>
                             <tr>
                                 {summary_headers}
@@ -1288,7 +1525,7 @@ class AWSCostExtractor:
                 <input type="text" id="searchTodosMeses" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('todosMesesTable', 'searchTodosMeses')">
                 
                 <div style="overflow-x: auto;">
-                    <table id="todosMesesTable">
+                    <table id="todosMesesTable" class="sortable-table">
                         <thead>
                             <tr>
                                 {all_monthly_headers}
@@ -1308,30 +1545,33 @@ class AWSCostExtractor:
             var activeMonthTab = '';
             
             // Inicializar primeira aba de mês como ativa
-            document.addEventListener('DOMContentLoaded', function() {{
+            document.addEventListener('DOMContentLoaded', function() {
                 // Encontrar a aba de mês mais recente e ativá-la
                 var monthTabs = document.querySelectorAll('.month-tab');
-                if (monthTabs.length > 0) {{
+                if (monthTabs.length > 0) {
                     var firstMonthId = monthTabs[0].id.replace('tab-', '');
                     activeMonthTab = firstMonthId;
-                }}
+                }
                 
                 // Destacar células com percentuais altos
                 highlightHighPercentages();
-            }});
+                
+                // Inicializar a funcionalidade de ordenação para todas as tabelas
+                initSortableTables();
+            });
             
-            function showTab(tabId) {{
+            function showTab(tabId) {
                 // Ocultar todos os conteúdos
                 var contents = document.getElementsByClassName('tab-content');
-                for (var i = 0; i < contents.length; i++) {{
+                for (var i = 0; i < contents.length; i++) {
                     contents[i].classList.remove('active');
-                }}
+                }
                 
                 // Atualizar abas principais
                 var tabs = document.getElementsByClassName('tab');
-                for (var i = 0; i < tabs.length; i++) {{
+                for (var i = 0; i < tabs.length; i++) {
                     tabs[i].classList.remove('active');
-                }}
+                }
                 
                 // Mostrar conteúdo selecionado
                 document.getElementById(tabId).classList.add('active');
@@ -1341,20 +1581,20 @@ class AWSCostExtractor:
                 
                 // Atualizar estado global
                 activeMainTab = tabId;
-            }}
+            }
             
-            function showMonthTab(monthId) {{
+            function showMonthTab(monthId) {
                 // Ocultar todos os conteúdos de mês
                 var monthContents = document.getElementsByClassName('month-content');
-                for (var i = 0; i < monthContents.length; i++) {{
+                for (var i = 0; i < monthContents.length; i++) {
                     monthContents[i].style.display = 'none';
-                }}
+                }
                 
                 // Atualizar abas de mês
                 var monthTabs = document.getElementsByClassName('month-tab');
-                for (var i = 0; i < monthTabs.length; i++) {{
+                for (var i = 0; i < monthTabs.length; i++) {
                     monthTabs[i].classList.remove('active');
-                }}
+                }
                 
                 // Mostrar conteúdo do mês selecionado
                 document.getElementById('month-' + monthId).style.display = 'block';
@@ -1364,94 +1604,158 @@ class AWSCostExtractor:
                 
                 // Atualizar estado global
                 activeMonthTab = monthId;
-            }}
+            }
             
-            function filterTable(tableId, inputId) {{
+            function filterTable(tableId, inputId) {
                 var input, filter, table, tr, td, i, j, txtValue, found;
                 input = document.getElementById(inputId);
                 filter = input.value.toUpperCase();
                 table = document.getElementById(tableId);
                 tr = table.getElementsByTagName("tr");
                 
-                for (i = 1; i < tr.length; i++) {{
+                for (i = 1; i < tr.length; i++) {
                     found = false;
                     td = tr[i].getElementsByTagName("td");
                     
-                    for (j = 0; j < 3; j++) {{
-                        if (td[j]) {{
+                    for (j = 0; j < 3; j++) {
+                        if (td[j]) {
                             txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                            if (txtValue.toUpperCase().indexOf(filter) > -1) {
                                 found = true;
                                 break;
-                            }}
-                        }}
-                    }}
+                            }
+                        }
+                    }
                     
-                    if (found) {{
+                    if (found) {
                         tr[i].style.display = "";
-                    }} else {{
+                    } else {
                         tr[i].style.display = "none";
-                    }}
-                }}
-            }}
+                    }
+                }
+            }
             
-            function filterCurrentMonthTable(filterText) {{
+            function filterCurrentMonthTable(filterText) {
                 if (!activeMonthTab) return;
                 
                 var filter = filterText.toUpperCase();
                 var table = document.getElementById('table-' + activeMonthTab);
                 var tr = table.getElementsByTagName("tr");
                 
-                for (var i = 1; i < tr.length; i++) {{
+                for (var i = 1; i < tr.length; i++) {
                     var found = false;
                     var td = tr[i].getElementsByTagName("td");
                     
-                    for (var j = 0; j < 2; j++) {{
-                        if (td[j]) {{
+                    for (var j = 0; j < 2; j++) {
+                        if (td[j]) {
                             var txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                            if (txtValue.toUpperCase().indexOf(filter) > -1) {
                                 found = true;
                                 break;
-                            }}
-                        }}
-                    }}
+                            }
+                        }
+                    }
                     
-                    if (found) {{
+                    if (found) {
                         tr[i].style.display = "";
-                    }} else {{
+                    } else {
                         tr[i].style.display = "none";
-                    }}
-                }}
-            }}
+                    }
+                }
+            }
             
-            function highlightHighPercentages() {{
+            function highlightHighPercentages() {
                 const tables = document.querySelectorAll('table');
-                tables.forEach(table => {{
+                tables.forEach(table => {
                     const headerRow = table.querySelector('tr');
                     if (!headerRow) return;
                     
                     const headers = headerRow.querySelectorAll('th');
                     
-                    for (let i = 0; i < headers.length; i++) {{
-                        if (headers[i].textContent.includes('% CloudWatch') || 
-                            headers[i].textContent.includes('% Config')) {{
+                    for (let i = 0; i < headers.length; i++) {
+                        if (headers[i].textContent.includes('% ')) {
                             const colIndex = i;
                             
                             const rows = table.querySelectorAll('tbody tr');
-                            for (let j = 0; j < rows.length; j++) {{
+                            for (let j = 0; j < rows.length; j++) {
                                 const cell = rows[j].querySelectorAll('td')[colIndex];
-                                if (cell) {{
+                                if (cell) {
                                     const percentText = cell.textContent.trim();
                                     const percentValue = parseFloat(percentText);
-                                    if (!isNaN(percentValue) && percentValue > 10) {{
+                                    if (!isNaN(percentValue) && percentValue > 10) {
                                         cell.classList.add('high-percentage');
-                                    }}
-                                }}
-                            }}
-                        }}
-                    }}
-                }});
-            }}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Função para inicializar a ordenação em todas as tabelas
+            function initSortableTables() {
+                const sortableTables = document.querySelectorAll('.sortable-table');
+                
+                sortableTables.forEach(table => {
+                    const headers = table.querySelectorAll('th.sortable');
+                    
+                    headers.forEach((header, index) => {
+                        header.addEventListener('click', function() {
+                            sortTable(table, index, this);
+                        });
+                    });
+                });
+            }
+            
+            // Função para ordenar uma tabela
+            function sortTable(table, colIndex, header) {
+                const rows = Array.from(table.querySelectorAll('tbody tr'));
+                const thead = table.querySelector('thead');
+                const headers = thead.querySelectorAll('th');
+                const isAsc = header.classList.contains('sort-asc');
+                
+                // Remover classes de ordenação de todos os cabeçalhos
+                headers.forEach(h => {
+                    h.classList.remove('sort-asc', 'sort-desc');
+                });
+                
+                // Adicionar classe de ordenação ao cabeçalho atual
+                header.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
+                
+                // Ordenar as linhas
+                rows.sort((a, b) => {
+                    const cellA = a.querySelectorAll('td')[colIndex].textContent.trim();
+                    const cellB = b.querySelectorAll('td')[colIndex].textContent.trim();
+                    
+                    // Verificar se a célula contém um valor monetário (começa com $)
+                    if (cellA.startsWith('$') && cellB.startsWith('$')) {
+                        // Remover $ e vírgulas, depois converter para número
+                        const numA = parseFloat(cellA.replace(/[$,]/g, ''));
+                        const numB = parseFloat(cellB.replace(/[$,]/g, ''));
+                        return isAsc ? numB - numA : numA - numB;
+                    }
+                    // Verificar se a célula contém uma porcentagem
+                    else if (cellA.endsWith('%') && cellB.endsWith('%')) {
+                        const numA = parseFloat(cellA);
+                        const numB = parseFloat(cellB);
+                        return isAsc ? numB - numA : numA - numB;
+                    }
+                    // Ordenação padrão como texto
+                    else {
+                        return isAsc ? 
+                            cellB.localeCompare(cellA, undefined, {numeric: true, sensitivity: 'base'}) :
+                            cellA.localeCompare(cellB, undefined, {numeric: true, sensitivity: 'base'});
+                    }
+                });
+                
+                // Reconstruir a tabela com linhas ordenadas
+                const tbody = table.querySelector('tbody');
+                tbody.innerHTML = '';
+                
+                rows.forEach(row => {
+                    tbody.appendChild(row);
+                });
+            }
         </script>
     </body>
     </html>"""
@@ -1524,4 +1828,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
