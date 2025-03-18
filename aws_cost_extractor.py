@@ -614,7 +614,7 @@ class AWSCostExtractor:
                     all_months.append(month)
         
         # Ordenar meses (formato 'Mmm/YYYY')
-        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].index(x.split('/')[0])))
+        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'].index(x.split('/')[0])))
         
         # Processar cada conta individualmente
         for account in self.account_data:
@@ -912,9 +912,13 @@ class AWSCostExtractor:
             # Formatar colunas de serviços
             for col in all_monthly_df_display.columns:
                 if ' (USD)' in col:
-                    all_monthly_df_display[col] = all_monthly_df_display[col].map('${:,.2f}'.format)
-                elif col == '%':
-                    all_monthly_df_display[col] = all_monthly_df_display[col].map('{:.2f}%'.format)
+                    all_monthly_df_display[col] = all_monthly_df_display[col].apply(
+                        lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
+                    )
+                elif '%' in col:  # incluindo todas as colunas que contêm '%'
+                    all_monthly_df_display[col] = all_monthly_df_display[col].apply(
+                        lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
+                    )
         
         # Formatar resumos por conta
         for account_summary in summary_df_list:
@@ -964,7 +968,7 @@ class AWSCostExtractor:
                     all_months.append(month)
         
         # Ordenar meses
-        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].index(x.split('/')[0])))
+        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'].index(x.split('/')[0])))
         
         # Gerar cabeçalhos de tabela para o resumo combinado
         combined_headers = ''
