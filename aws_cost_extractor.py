@@ -2,83 +2,309 @@ import boto3
 import datetime
 import pandas as pd
 import os
+import sys
+import json
+import webbrowser
+import time
+from botocore.exceptions import ClientError
 from dateutil.relativedelta import relativedelta
 import argparse
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 
+class AWSSSOAuth:
+    """
+    Classe para autenticação via AWS SSO e acesso às contas.
+    """
+    def __init__(self, start_url, region="us-east-1", sso_region=None):
+        """
+        Inicializa o autenticador SSO.
+        
+        Args:
+            start_url: URL do portal SSO (ex: itaulzprod.awsapps.com/start)
+            region: Região principal para API calls
+            sso_region: Região do SSO (se diferente da principal)
+        """
+        self.start_url = start_url if start_url.startswith('https://') else f'https://{start_url}'
+        self.region = region
+        self.sso_region = sso_region if sso_region else region
+        self.session = boto3.Session(region_name=self.region)
+        self.sso_oidc_client = self.session.client('sso-oidc', region_name=self.sso_region)
+        self.sso_client = self.session.client('sso', region_name=self.sso_region)
+        self.token_cache_file = os.path.expanduser('~/.aws/sso/cache/token.json')
+        self.accounts_cache_file = os.path.expanduser('~/.aws/sso/cache/accounts.json')
+        
+        # Criar diretório para cache se não existir
+        os.makedirs(os.path.dirname(self.token_cache_file), exist_ok=True)
+        
+    def _get_cached_token(self):
+        """
+        Obtém token SSO do cache se válido.
+        
+        Returns:
+            dict: Token de acesso ou None
+        """
+        if os.path.exists(self.token_cache_file):
+            try:
+                with open(self.token_cache_file, 'r') as f:
+                    cache = json.load(f)
+                    if 'expiresAt' in cache and 'accessToken' in cache:
+                        expires_at = datetime.datetime.fromisoformat(cache['expiresAt'].replace('Z', '+00:00'))
+                        if expires_at > datetime.datetime.now(datetime.timezone.utc):
+                            return cache['accessToken']
+            except Exception as e:
+                print(f"Erro ao ler cache de token: {str(e)}")
+        return None
+        
+    def _register_client(self):
+        """
+        Registra um cliente para o processo de autenticação.
+        
+        Returns:
+            tuple: (client_id, client_secret)
+        """
+        response = self.sso_oidc_client.register_client(
+            clientName='aws-cost-extractor',
+            clientType='public'
+        )
+        return response['clientId'], response['clientSecret']
+        
+    def _start_device_authorization(self, client_id, client_secret):
+        """
+        Inicia o fluxo de autorização do dispositivo.
+        
+        Args:
+            client_id: ID do cliente registrado
+            client_secret: Secret do cliente registrado
+            
+        Returns:
+            dict: Informações de autorização incluindo o URL para abrir no navegador
+        """
+        response = self.sso_oidc_client.start_device_authorization(
+            clientId=client_id,
+            clientSecret=client_secret,
+            startUrl=self.start_url
+        )
+        return response
+        
+    def _open_browser_for_auth(self, verification_uri_complete):
+        """
+        Abre o navegador para autenticação.
+        
+        Args:
+            verification_uri_complete: URL completo para autenticação
+        """
+        print(f"\nAbrindo navegador para autenticação AWS SSO...")
+        print(f"Se o navegador não abrir automaticamente, acesse manualmente: {verification_uri_complete}")
+        
+        try:
+            webbrowser.open(verification_uri_complete)
+        except Exception as e:
+            print(f"Erro ao abrir navegador: {str(e)}")
+            print(f"Por favor, abra manualmente: {verification_uri_complete}")
+        
+        print("\nAguardando autenticação... (autorize no navegador e volte aqui)")
+        
+    def _get_token(self, client_id, client_secret, device_code):
+        """
+        Obtém o token após aprovação no navegador.
+        
+        Args:
+            client_id: ID do cliente
+            client_secret: Secret do cliente
+            device_code: Código do dispositivo
+            
+        Returns:
+            str: Token de acesso
+        """
+        # Tentar obter o token a cada 5 segundos até a autorização ou timeout
+        max_tries = 60  # 5 minutos
+        tries = 0
+        
+        while tries < max_tries:
+            try:
+                response = self.sso_oidc_client.create_token(
+                    clientId=client_id,
+                    clientSecret=client_secret,
+                    grantType='urn:ietf:params:oauth:grant-type:device_code',
+                    deviceCode=device_code
+                )
+                
+                # Salvar token no cache
+                cache = {
+                    'accessToken': response['accessToken'],
+                    'expiresAt': (datetime.datetime.now(datetime.timezone.utc) + 
+                                 datetime.timedelta(seconds=response['expiresIn'])).isoformat()
+                }
+                
+                with open(self.token_cache_file, 'w') as f:
+                    json.dump(cache, f)
+                    
+                print("Autenticação bem-sucedida!")
+                return response['accessToken']
+                
+            except self.sso_oidc_client.exceptions.AuthorizationPendingException:
+                # Ainda aguardando aprovação
+                time.sleep(5)
+                tries += 1
+            except Exception as e:
+                print(f"Erro ao obter token: {str(e)}")
+                return None
+                
+        print("Timeout na autenticação. Por favor, tente novamente.")
+        return None
+        
+    def authenticate(self):
+        """
+        Executa o fluxo completo de autenticação.
+        
+        Returns:
+            str: Token de acesso
+        """
+        # Verificar cache primeiro
+        token = self._get_cached_token()
+        if token:
+            print("Usando token SSO em cache.")
+            return token
+            
+        # Iniciar novo fluxo de autenticação
+        print("Iniciando fluxo de autenticação AWS SSO...")
+        client_id, client_secret = self._register_client()
+        
+        auth_response = self._start_device_authorization(client_id, client_secret)
+        self._open_browser_for_auth(auth_response['verificationUriComplete'])
+        
+        return self._get_token(client_id, client_secret, auth_response['deviceCode'])
+        
+    def list_available_accounts(self, access_token):
+        """
+        Lista todas as contas disponíveis para o usuário.
+        
+        Args:
+            access_token: Token de acesso SSO
+            
+        Returns:
+            list: Lista de dicionários com informações das contas
+        """
+        # Verificar cache primeiro
+        if os.path.exists(self.accounts_cache_file):
+            try:
+                with open(self.accounts_cache_file, 'r') as f:
+                    cache = json.load(f)
+                    if 'expiresAt' in cache and 'accounts' in cache:
+                        expires_at = datetime.datetime.fromisoformat(cache['expiresAt'].replace('Z', '+00:00'))
+                        if expires_at > datetime.datetime.now(datetime.timezone.utc):
+                            print("Usando cache de contas disponíveis.")
+                            return cache['accounts']
+            except Exception as e:
+                print(f"Erro ao ler cache de contas: {str(e)}")
+        
+        accounts = []
+        try:
+            paginator = self.sso_client.get_paginator('list_accounts')
+            
+            for page in paginator.paginate(accessToken=access_token):
+                accounts.extend(page['accountList'])
+                
+            # Salvar no cache
+            cache = {
+                'accounts': accounts,
+                'expiresAt': (datetime.datetime.now(datetime.timezone.utc) + 
+                             datetime.timedelta(hours=24)).isoformat()
+            }
+            
+            with open(self.accounts_cache_file, 'w') as f:
+                json.dump(cache, f)
+                
+            return accounts
+        except Exception as e:
+            print(f"Erro ao listar contas: {str(e)}")
+            return []
+            
+    def get_account_roles(self, access_token, account_id):
+        """
+        Obtém todas as funções disponíveis para uma conta.
+        
+        Args:
+            access_token: Token de acesso SSO
+            account_id: ID da conta AWS
+            
+        Returns:
+            list: Lista de funções disponíveis
+        """
+        try:
+            response = self.sso_client.list_account_roles(
+                accessToken=access_token,
+                accountId=account_id
+            )
+            return response['roleList']
+        except Exception as e:
+            print(f"Erro ao listar funções para conta {account_id}: {str(e)}")
+            return []
+            
+    def get_credentials(self, access_token, account_id, role_name):
+        """
+        Obtém credenciais temporárias para uma conta/função.
+        
+        Args:
+            access_token: Token de acesso SSO
+            account_id: ID da conta AWS
+            role_name: Nome da função a assumir
+            
+        Returns:
+            boto3.Session: Sessão com as credenciais temporárias
+        """
+        try:
+            response = self.sso_client.get_role_credentials(
+                accessToken=access_token,
+                accountId=account_id,
+                roleName=role_name
+            )
+            
+            creds = response['roleCredentials']
+            
+            return boto3.Session(
+                aws_access_key_id=creds['accessKeyId'],
+                aws_secret_access_key=creds['secretAccessKey'],
+                aws_session_token=creds['sessionToken'],
+                region_name=self.region
+            )
+        except Exception as e:
+            print(f"Erro ao obter credenciais para conta {account_id}, função {role_name}: {str(e)}")
+            return None
+
+
 class AWSCostExtractor:
-    def __init__(self, profile_name=None):
+    def __init__(self, sso_auth, access_token):
         """
         Inicializa o extrator de custos AWS.
         
         Args:
-            profile_name: Nome do perfil AWS configurado localmente (opcional)
+            sso_auth: Instância de AWSSSOAuth
+            access_token: Token de acesso SSO
         """
-        self.session = boto3.Session(profile_name=profile_name)
-        self.sts_client = self.session.client('sts')
-        self.organizations_client = self.session.client('organizations')
+        self.sso_auth = sso_auth
+        self.access_token = access_token
         self.account_data = []
         
-    def get_aws_accounts(self):
-        """
-        Obtém todas as contas AWS na organização.
-        
-        Returns:
-            list: Lista de dicionários com informações das contas
-        """
-        accounts = []
-        try:
-            paginator = self.organizations_client.get_paginator('list_accounts')
-            for page in paginator.paginate():
-                accounts.extend(page['Accounts'])
-            return accounts
-        except Exception as e:
-            print(f"Erro ao obter contas: {str(e)}")
-            return []
-            
-    def assume_role(self, account_id, role_name="OrganizationAccountAccessRole"):
-        """
-        Assume uma função em uma conta específica para acessar recursos.
-        
-        Args:
-            account_id: ID da conta AWS
-            role_name: Nome da função a ser assumida
-            
-        Returns:
-            boto3.Session: Uma sessão com as credenciais temporárias
-        """
-        try:
-            role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
-            response = self.sts_client.assume_role(
-                RoleArn=role_arn,
-                RoleSessionName="CostExplorerExtractionSession"
-            )
-            
-            credentials = response['Credentials']
-            return boto3.Session(
-                aws_access_key_id=credentials['AccessKeyId'],
-                aws_secret_access_key=credentials['SecretAccessKey'],
-                aws_session_token=credentials['SessionToken']
-            )
-        except Exception as e:
-            print(f"Erro ao assumir função na conta {account_id}: {str(e)}")
-            return None
-            
-    def get_cost_data(self, account_id, account_name):
+    def get_cost_data(self, account_id, account_name, role_name):
         """
         Obtém dados de custo para uma conta específica.
         
         Args:
             account_id: ID da conta AWS
             account_name: Nome da conta AWS
+            role_name: Nome da função a assumir
             
         Returns:
             dict: Dicionário com os dados de custo
         """
         try:
-            account_session = self.assume_role(account_id)
+            account_session = self.sso_auth.get_credentials(
+                self.access_token, account_id, role_name
+            )
+            
             if not account_session:
                 return None
                 
@@ -156,6 +382,7 @@ class AWSCostExtractor:
             return {
                 'account_id': account_id,
                 'account_name': account_name,
+                'role_name': role_name,
                 'months': months,
                 'total_costs': total_costs,
                 'cloudwatch_costs': cloudwatch_costs,
@@ -169,21 +396,61 @@ class AWSCostExtractor:
             print(f"Erro ao obter dados de custo para a conta {account_id}: {str(e)}")
             return None
     
-    def extract_all_accounts_cost(self):
+    def extract_all_accounts_cost(self, role_name_preference=None):
         """
         Extrai dados de custo para todas as contas.
+        
+        Args:
+            role_name_preference: Lista de nomes de funções por ordem de preferência
         """
-        accounts = self.get_aws_accounts()
+        accounts = self.sso_auth.list_available_accounts(self.access_token)
         total_accounts = len(accounts)
         
         print(f"Encontradas {total_accounts} contas. Iniciando extração de custos...")
         
         for i, account in enumerate(accounts, 1):
-            account_id = account['Id']
-            account_name = account['Name']
+            account_id = account['accountId']
+            account_name = account['accountName']
             print(f"Processando conta {i}/{total_accounts}: {account_name} ({account_id})")
             
-            cost_data = self.get_cost_data(account_id, account_name)
+            # Obter funções disponíveis para a conta
+            roles = self.sso_auth.get_account_roles(self.access_token, account_id)
+            
+            if not roles:
+                print(f"⚠️ Nenhuma função disponível para a conta {account_name}")
+                continue
+                
+            # Selecionar função apropriada
+            selected_role = None
+            
+            # Se tiver uma lista de preferências, use-a
+            if role_name_preference:
+                for preferred_role in role_name_preference:
+                    for role in roles:
+                        if role['roleName'] == preferred_role:
+                            selected_role = preferred_role
+                            break
+                    if selected_role:
+                        break
+            
+            # Se não tiver preferência ou nenhuma função preferida estiver disponível,
+            # use a primeira função com "Admin" ou a primeira disponível
+            if not selected_role:
+                for role in roles:
+                    if 'Admin' in role['roleName'] or 'admin' in role['roleName']:
+                        selected_role = role['roleName']
+                        break
+                        
+                if not selected_role and roles:
+                    selected_role = roles[0]['roleName']
+            
+            if not selected_role:
+                print(f"⚠️ Não foi possível selecionar uma função para a conta {account_name}")
+                continue
+                
+            print(f"Usando função: {selected_role}")
+            
+            cost_data = self.get_cost_data(account_id, account_name, selected_role)
             if cost_data:
                 self.account_data.append(cost_data)
                 print(f"✅ Dados extraídos com sucesso para {account_name}")
@@ -209,6 +476,7 @@ class AWSCostExtractor:
             summary_data.append({
                 'ID da Conta': account['account_id'],
                 'Nome da Conta': account['account_name'],
+                'Função': account['role_name'],
                 'Custo Total (USD)': account['total_3_months'],
                 'Custo CloudWatch (USD)': account['cloudwatch_3_months'],
                 'Percentual CloudWatch (%)': account['percentage_3_months']
@@ -253,14 +521,14 @@ class AWSCostExtractor:
             
             # Formatar células numéricas
             for row in range(2, len(summary_df) + 2):
-                worksheet.cell(row=row, column=3).number_format = '$#,##0.00'
                 worksheet.cell(row=row, column=4).number_format = '$#,##0.00'
-                worksheet.cell(row=row, column=5).number_format = '0.00%'
+                worksheet.cell(row=row, column=5).number_format = '$#,##0.00'
+                worksheet.cell(row=row, column=6).number_format = '0.00%'
                 
                 # Destacar percentuais altos de CloudWatch (> 10%)
-                percentage = worksheet.cell(row=row, column=5).value
+                percentage = worksheet.cell(row=row, column=6).value
                 if percentage and percentage > 10:
-                    worksheet.cell(row=row, column=5).fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+                    worksheet.cell(row=row, column=6).fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
             
             # Formatar cabeçalhos
             header_font = Font(bold=True)
@@ -313,6 +581,7 @@ class AWSCostExtractor:
             summary_data.append({
                 'ID da Conta': account['account_id'],
                 'Nome da Conta': account['account_name'],
+                'Função': account['role_name'],
                 'Custo Total (USD)': account['total_3_months'],
                 'Custo CloudWatch (USD)': account['cloudwatch_3_months'],
                 'Percentual CloudWatch (%)': account['percentage_3_months']
@@ -461,30 +730,12 @@ class AWSCostExtractor:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Extrai dados de custo da AWS para múltiplas contas.')
-    parser.add_argument('--profile', type=str, help='Nome do perfil AWS configurado localmente')
-    parser.add_argument('--format', choices=['excel', 'html', 'both'], default='both', 
-                        help='Formato do relatório: excel, html, ou both (ambos)')
-    parser.add_argument('--output-excel', type=str, default='aws_cost_report.xlsx',
-                        help='Caminho para salvar o relatório Excel')
-    parser.add_argument('--output-html', type=str, default='aws_cost_report.html',
-                        help='Caminho para salvar o relatório HTML')
-    
-    args = parser.parse_args()
-    
-    extractor = AWSCostExtractor(profile_name=args.profile)
-    
-    print("Iniciando extração de custos da AWS...")
-    extractor.extract_all_accounts_cost()
-    
-    if args.format in ['excel', 'both']:
-        extractor.generate_excel_report(output_path=args.output_excel)
-    
-    if args.format in ['html', 'both']:
-        extractor.generate_html_report(output_path=args.output_html)
-    
-    print("Processo concluído!")
-
-
-if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Extrai dados de custo da AWS para múltiplas contas via SSO.')
+    parser.add_argument('--start-url', type=str, required=True,
+                        help='URL do portal SSO (ex: itaulzprod.awsapps.com/start)')
+    parser.add_argument('--region', type=str, default='us-east-1',
+                        help='Região AWS principal (padrão: us-east-1)')
+    parser.add_argument('--sso-region', type=str,
+                        help='Região do SSO se diferente da região principal')
+    parser.add_argument('--preferred-roles', type=str, nargs='+',
+                        help='Lista de nomes de funções preferidas
