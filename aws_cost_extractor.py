@@ -870,8 +870,7 @@ class AWSCostExtractor:
                     all_months.append(month)
         
         # Ordenar meses (formato 'Mmm/YYYY')
-        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
-                                                        'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dec'].index(x.split('/')[0])))
+        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dec'].index(x.split('/')[0])))
         
         # Criar DataFrames para cada mês
         monthly_dfs = {}
