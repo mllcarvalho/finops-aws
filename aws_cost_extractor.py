@@ -1080,7 +1080,7 @@ class AWSCostExtractor:
         timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
         
         # Combinar tudo em um HTML
-        html_content = f"""<!DOCTYPE html>
+        html_content = """<!DOCTYPE html>
     <html lang="pt-br">
     <head>
         <meta charset="UTF-8">
@@ -1561,7 +1561,7 @@ class AWSCostExtractor:
             }
         </script>
     </body>
-    </html>"""
+    </html>""".format(timestamp=timestamp, summary_headers=summary_headers, summary_table_body=summary_table_body)
         
         # Salvar o arquivo HTML
         with open(output_path, 'w', encoding='utf-8') as f:
