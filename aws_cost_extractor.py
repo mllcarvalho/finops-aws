@@ -724,348 +724,356 @@ class AWSCostExtractor:
             )
     
     def generate_html_report(self, output_path="aws_cost_report.html"):
-        """
-        Gera um relatório HTML com os dados de custo extraídos.
+    """
+    Gera um relatório HTML com os dados de custo extraídos.
+    
+    Args:
+        output_path: Caminho para salvar o arquivo HTML
+    """
+    if not self.account_data:
+        print("Sem dados para gerar relatório.")
+        return
+    
+    # Criar DataFrame para o resumo das contas
+    summary_data = []
+    for account in self.account_data:
+        row_data = {
+            'ID da Conta': account['account_id'],
+            'Nome da Conta': account['account_name'],
+            'Função': account['role_name'],
+            'Custo Total (USD)': account['total_3_months']
+        }
         
-        Args:
-            output_path: Caminho para salvar o arquivo HTML
-        """
-        if not self.account_data:
-            print("Sem dados para gerar relatório.")
-            return
+        # Adicionar colunas para cada serviço
+        for service_key in self.services.keys():
+            row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
+            if service_key in ['CloudWatch', 'Config']:
+                row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
         
-        # Criar DataFrame para o resumo das contas
-        summary_data = []
-        for account in self.account_data:
+        summary_data.append(row_data)
+    
+    summary_df = pd.DataFrame(summary_data)
+    
+    # Criar DataFrames para os detalhes mensais
+    monthly_data = []
+    for account in self.account_data:
+        for i, month in enumerate(account['months']):
             row_data = {
                 'ID da Conta': account['account_id'],
                 'Nome da Conta': account['account_name'],
-                'Função': account['role_name'],
-                'Custo Total (USD)': account['total_3_months']
+                'Mês': month,
+                'Custo Total (USD)': account['total_costs'][i]
             }
             
             # Adicionar colunas para cada serviço
             for service_key in self.services.keys():
-                row_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
+                row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
                 if service_key in ['CloudWatch', 'Config']:
-                    row_data[f'% {service_key}'] = account['service_total_percentages'][service_key]
+                    row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
             
-            summary_data.append(row_data)
+            monthly_data.append(row_data)
+    
+    monthly_df = pd.DataFrame(monthly_data)
+    
+    # Ordenar os DataFrames
+    summary_df = summary_df.sort_values('Custo Total (USD)', ascending=False)
+    monthly_df = monthly_df.sort_values(['Nome da Conta', 'Mês'])
+    
+    # Formatar os dados para exibição HTML
+    summary_df_display = summary_df.copy()
+    monthly_df_display = monthly_df.copy()
+    
+    # Formatar colunas de custo
+    summary_df_display['Custo Total (USD)'] = summary_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
+    monthly_df_display['Custo Total (USD)'] = monthly_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
+    
+    for service_key in self.services.keys():
+        summary_df_display[f'{service_key} (USD)'] = summary_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+        monthly_df_display[f'{service_key} (USD)'] = monthly_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
         
-        summary_df = pd.DataFrame(summary_data)
+        if service_key in ['CloudWatch', 'Config']:
+            summary_df_display[f'% {service_key}'] = summary_df_display[f'% {service_key}'].map('{:.2f}%'.format)
+            monthly_df_display[f'% {service_key}'] = monthly_df_display[f'% {service_key}'].map('{:.2f}%'.format)
+    
+    # Gerar cabeçalhos de tabela
+    summary_headers = ''.join([f'<th>{col}</th>' for col in summary_df_display.columns])
+    monthly_headers = ''.join([f'<th>{col}</th>' for col in monthly_df_display.columns])
+    
+    # Gerar linhas da tabela de resumo
+    summary_rows = []
+    for _, row in summary_df_display.iterrows():
+        cells = []
+        for col, value in row.items():
+            cell_class = "cost-cell" if "USD" in col or "%" in col else ""
+            cells.append(f'<td class="{cell_class}">{value}</td>')
+        summary_rows.append('<tr>' + ''.join(cells) + '</tr>')
+    summary_table_body = ''.join(summary_rows)
+    
+    # Gerar linhas da tabela mensal
+    monthly_rows = []
+    for _, row in monthly_df_display.iterrows():
+        cells = []
+        for col, value in row.items():
+            cell_class = "cost-cell" if "USD" in col or "%" in col else ""
+            cells.append(f'<td class="{cell_class}">{value}</td>')
+        monthly_rows.append('<tr>' + ''.join(cells) + '</tr>')
+    monthly_table_body = ''.join(monthly_rows)
+    
+    # Gerar legenda de serviços
+    service_legend = []
+    for service_key in self.services.keys():
+        color = f'#{abs(hash(service_key)) % 0xffffff:06x}'
+        service_legend.append(f'<div class="service-item"><div class="service-color" style="background-color: {color}"></div>{service_key}</div>')
+    service_legend_html = ''.join(service_legend)
+    
+    # Gerar timestamp
+    timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    
+    # Combinar tudo em um HTML
+    html_content = f"""<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório de Custos AWS</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }}
+        h1, h2 {{
+            color: #0066cc;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        table {{
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }}
+        th, td {{
+            text-align: left;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }}
+        th {{
+            background-color: #0066cc;
+            color: white;
+            position: sticky;
+            top: 0;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f5f5f5;
+        }}
+        tr:hover {{
+            background-color: #e9f1fa;
+        }}
+        .high-percentage {{
+            background-color: #FFEB9C;
+        }}
+        .timestamp {{
+            font-size: 0.8em;
+            color: #666;
+            margin-bottom: 20px;
+        }}
+        .summary {{
+            background-color: #f0f7ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }}
+        .tabs {{
+            display: flex;
+            margin-bottom: 20px;
+        }}
+        .tab {{
+            padding: 10px 20px;
+            background-color: #ddd;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-bottom: none;
+            border-radius: 5px 5px 0 0;
+            margin-right: 5px;
+        }}
+        .tab.active {{
+            background-color: #0066cc;
+            color: white;
+        }}
+        .tab-content {{
+            display: none;
+        }}
+        .tab-content.active {{
+            display: block;
+        }}
+        .search {{
+            padding: 10px;
+            margin-bottom: 20px;
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }}
+        .cost-cell {{
+            text-align: right;
+        }}
+        .service-legend {{
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+        }}
+        .service-item {{
+            margin-right: 20px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }}
+        .service-color {{
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Relatório de Custos AWS</h1>
+        <div class="timestamp">Gerado em: {timestamp}</div>
         
-        # Criar DataFrames para os detalhes mensais
-        monthly_data = []
-        for account in self.account_data:
-            for i, month in enumerate(account['months']):
-                row_data = {
-                    'ID da Conta': account['account_id'],
-                    'Nome da Conta': account['account_name'],
-                    'Mês': month,
-                    'Custo Total (USD)': account['total_costs'][i]
-                }
-                
-                # Adicionar colunas para cada serviço
-                for service_key in self.services.keys():
-                    row_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                    if service_key in ['CloudWatch', 'Config']:
-                        row_data[f'% {service_key}'] = account['service_percentages'][service_key][i]
-                
-                monthly_data.append(row_data)
+        <div class="summary">
+            <h2>Resumo dos Últimos 3 Meses</h2>
+            <p>Total de Contas Analisadas: {len(summary_df)}</p>
+        </div>
         
-        monthly_df = pd.DataFrame(monthly_data)
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('resumo')">Resumo</div>
+            <div class="tab" onclick="showTab('detalhes')">Detalhes Mensais</div>
+        </div>
         
-        # Ordenar os DataFrames
-        summary_df = summary_df.sort_values('Custo Total (USD)', ascending=False)
-        monthly_df = monthly_df.sort_values(['Nome da Conta', 'Mês'])
-        
-        # Formatar os dados para exibição HTML
-        summary_df_display = summary_df.copy()
-        monthly_df_display = monthly_df.copy()
-        
-        # Formatar colunas de custo
-        summary_df_display['Custo Total (USD)'] = summary_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
-        monthly_df_display['Custo Total (USD)'] = monthly_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
-        
-        for service_key in self.services.keys():
-            summary_df_display[f'{service_key} (USD)'] = summary_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
-            monthly_df_display[f'{service_key} (USD)'] = monthly_df_display[f'{service_key} (USD)'].map('${:,.2f}'.format)
+        <div id="resumo" class="tab-content active">
+            <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
             
-            if service_key in ['CloudWatch', 'Config']:
-                summary_df_display[f'% {service_key}'] = summary_df_display[f'% {service_key}'].map('{:.2f}%'.format)
-                monthly_df_display[f'% {service_key}'] = monthly_df_display[f'% {service_key}'].map('{:.2f}%'.format)
-        
-        # Criar HTML
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="pt-br">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Relatório de Custos AWS</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 20px;
-                    color: #333;
-                }}
-                h1, h2 {{
-                    color: #0066cc;
-                }}
-                .container {{
-                    max-width: 1200px;
-                    margin: 0 auto;
-                }}
-                table {{
-                    border-collapse: collapse;
-                    width: 100%;
-                    margin-bottom: 30px;
-                    font-size: 14px;
-                }}
-                th, td {{
-                    text-align: left;
-                    padding: 10px;
-                    border: 1px solid #ddd;
-                }}
-                th {{
-                    background-color: #0066cc;
-                    color: white;
-                    position: sticky;
-                    top: 0;
-                }}
-                tr:nth-child(even) {{
-                    background-color: #f5f5f5;
-                }}
-                tr:hover {{
-                    background-color: #e9f1fa;
-                }}
-                .high-percentage {{
-                    background-color: #FFEB9C;
-                }}
-                .timestamp {{
-                    font-size: 0.8em;
-                    color: #666;
-                    margin-bottom: 20px;
-                }}
-                .summary {{
-                    background-color: #f0f7ff;
-                    padding: 15px;
-                    border-radius: 5px;
-                    margin-bottom: 20px;
-                }}
-                .tabs {{
-                    display: flex;
-                    margin-bottom: 20px;
-                }}
-                .tab {{
-                    padding: 10px 20px;
-                    background-color: #ddd;
-                    cursor: pointer;
-                    border: 1px solid #ccc;
-                    border-bottom: none;
-                    border-radius: 5px 5px 0 0;
-                    margin-right: 5px;
-                }}
-                .tab.active {{
-                    background-color: #0066cc;
-                    color: white;
-                }}
-                .tab-content {{
-                    display: none;
-                }}
-                .tab-content.active {{
-                    display: block;
-                }}
-                .search {{
-                    padding: 10px;
-                    margin-bottom: 20px;
-                    width: 100%;
-                    box-sizing: border-box;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                }}
-                .cost-cell {{
-                    text-align: right;
-                }}
-                .service-legend {{
-                    margin-bottom: 20px;
-                    display: flex;
-                    flex-wrap: wrap;
-                }}
-                .service-item {{
-                    margin-right: 20px;
-                    margin-bottom: 10px;
-                    display: flex;
-                    align-items: center;
-                }}
-                .service-color {{
-                    width: 20px;
-                    height: 20px;
-                    margin-right: 5px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Relatório de Custos AWS</h1>
-                <div class="timestamp">Gerado em: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</div>
-                
-                <div class="summary">
-                    <h2>Resumo dos Últimos 3 Meses</h2>
-                    <p>Total de Contas Analisadas: {len(summary_df)}</p>
-                </div>
-                
-                <div class="tabs">
-                    <div class="tab active" onclick="showTab('resumo')">Resumo</div>
-                    <div class="tab" onclick="showTab('detalhes')">Detalhes Mensais</div>
-                </div>
-                
-                <div id="resumo" class="tab-content active">
-                    <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
-                    
-                    <div class="service-legend">
-                        <h3>Serviços analisados:</h3>
-                        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
-                            {''.join([f'<div class="service-item"><div class="service-color" style="background-color: #{hash(service_key) % 0xffffff:06x}"></div>{service_key}</div>' for service_key in self.services.keys()])}
-                        </div>
-                    </div>
-                    
-                    <div style="overflow-x: auto;">
-                        <table id="resumoTable">
-                            <thead>
-                                <tr>
-                                    {''.join([f'<th>{col}</th>' for col in summary_df_display.columns])}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {''.join([
-                                    '<tr>' + 
-                                    ''.join([
-                                        f'<td class="{"cost-cell" if "USD" in col or "%" in col else ""}">{value}</td>' 
-                                        for col, value in row.items()
-                                    ]) + 
-                                    '</tr>' 
-                                    for _, row in summary_df_display.iterrows()
-                                ])}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                
-                <div id="detalhes" class="tab-content">
-                    <input type="text" id="searchDetalhes" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('detalhesTable', 'searchDetalhes')">
-                    
-                    <div style="overflow-x: auto;">
-                        <table id="detalhesTable">
-                            <thead>
-                                <tr>
-                                    {''.join([f'<th>{col}</th>' for col in monthly_df_display.columns])}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {''.join([
-                                    '<tr>' + 
-                                    ''.join([
-                                        f'<td class="{"cost-cell" if "USD" in col or "%" in col else ""}">{value}</td>' 
-                                        for col, value in row.items()
-                                    ]) + 
-                                    '</tr>' 
-                                    for _, row in monthly_df_display.iterrows()
-                                ])}
-                            </tbody>
-                        </table>
-                    </div>
+            <div class="service-legend">
+                <h3>Serviços analisados:</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
+                    {service_legend_html}
                 </div>
             </div>
             
-            <script>
-                // Alternar entre tabs
-                function showTab(tabId) {
-                    // Ocultar todos os conteúdos
-                    var contents = document.getElementsByClassName('tab-content');
-                    for (var i = 0; i < contents.length; i++) {
-                        contents[i].classList.remove('active');
-                    }
-                    
-                    // Atualizar tabs
-                    var tabs = document.getElementsByClassName('tab');
-                    for (var i = 0; i < tabs.length; i++) {
-                        tabs[i].classList.remove('active');
-                    }
-                    
-                    // Mostrar conteúdo selecionado
-                    document.getElementById(tabId).classList.add('active');
-                    
-                    // Atualizar tab
-                    event.currentTarget.classList.add('active');
-                }
-                
-                // Filtrar tabelas
-                function filterTable(tableId, inputId) {
-                    var input, filter, table, tr, td, i, j, txtValue, found;
-                    input = document.getElementById(inputId);
-                    filter = input.value.toUpperCase();
-                    table = document.getElementById(tableId);
-                    tr = table.getElementsByTagName("tr");
-                    
-                    for (i = 1; i < tr.length; i++) {
-                        found = false;
-                        td = tr[i].getElementsByTagName("td");
-                        
-                        for (j = 0; j < 3; j++) { // Filtrar apenas pelas primeiras 3 colunas (ID, Nome, Mês/Função)
-                            if (td[j]) {
-                                txtValue = td[j].textContent || td[j].innerText;
-                                if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if (found) {
-                            tr[i].style.display = "";
-                        } else {
-                            tr[i].style.display = "none";
-                        }
-                    }
-                }
-                
-                // Destacar percentuais altos (> 10%)
-                document.addEventListener('DOMContentLoaded', function() {
-                    const tables = document.querySelectorAll('table');
-                    tables.forEach(table => {
-                        const headerRow = table.querySelector('tr');
-                        const headers = headerRow.querySelectorAll('th');
-                        
-                        for (let i = 0; i < headers.length; i++) {
-                            if (headers[i].textContent.includes('% CloudWatch') || 
-                                headers[i].textContent.includes('% Config')) {
-                                const colIndex = i;
-                                
-                                const rows = table.querySelectorAll('tbody tr');
-                                for (let j = 0; j < rows.length; j++) {
-                                    const cell = rows[j].querySelectorAll('td')[colIndex];
-                                    const percentText = cell.textContent.trim();
-                                    const percentValue = parseFloat(percentText);
-                                    if (percentValue > 10) {
-                                        cell.classList.add('high-percentage');
-                                    }
-                                }
-                            }
-                        }
-                    });
-                });
-            </script>
-        </body>
-        </html>
-        """
+            <div style="overflow-x: auto;">
+                <table id="resumoTable">
+                    <thead>
+                        <tr>
+                            {summary_headers}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {summary_table_body}
+                    </tbody>
+                </table>
+            </div>
+        </div>
         
-        # Salvar o arquivo HTML
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+        <div id="detalhes" class="tab-content">
+            <input type="text" id="searchDetalhes" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('detalhesTable', 'searchDetalhes')">
+            
+            <div style="overflow-x: auto;">
+                <table id="detalhesTable">
+                    <thead>
+                        <tr>
+                            {monthly_headers}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {monthly_table_body}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function showTab(tabId) {{
+            var contents = document.getElementsByClassName('tab-content');
+            for (var i = 0; i < contents.length; i++) {{
+                contents[i].classList.remove('active');
+            }}
+            
+            var tabs = document.getElementsByClassName('tab');
+            for (var i = 0; i < tabs.length; i++) {{
+                tabs[i].classList.remove('active');
+            }}
+            
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }}
         
-        print(f"Relatório HTML gerado com sucesso: {output_path}")
+        function filterTable(tableId, inputId) {{
+            var input, filter, table, tr, td, i, j, txtValue, found;
+            input = document.getElementById(inputId);
+            filter = input.value.toUpperCase();
+            table = document.getElementById(tableId);
+            tr = table.getElementsByTagName("tr");
+            
+            for (i = 1; i < tr.length; i++) {{
+                found = false;
+                td = tr[i].getElementsByTagName("td");
+                
+                for (j = 0; j < 3; j++) {{
+                    if (td[j]) {{
+                        txtValue = td[j].textContent || td[j].innerText;
+                        if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                            found = true;
+                            break;
+                        }}
+                    }}
+                }}
+                
+                if (found) {{
+                    tr[i].style.display = "";
+                }} else {{
+                    tr[i].style.display = "none";
+                }}
+            }}
+        }}
+        
+        document.addEventListener('DOMContentLoaded', function() {{
+            const tables = document.querySelectorAll('table');
+            tables.forEach(table => {{
+                const headerRow = table.querySelector('tr');
+                const headers = headerRow.querySelectorAll('th');
+                
+                for (let i = 0; i < headers.length; i++) {{
+                    if (headers[i].textContent.includes('% CloudWatch') || 
+                        headers[i].textContent.includes('% Config')) {{
+                        const colIndex = i;
+                        
+                        const rows = table.querySelectorAll('tbody tr');
+                        for (let j = 0; j < rows.length; j++) {{
+                            const cell = rows[j].querySelectorAll('td')[colIndex];
+                            const percentText = cell.textContent.trim();
+                            const percentValue = parseFloat(percentText);
+                            if (percentValue > 10) {{
+                                cell.classList.add('high-percentage');
+                            }}
+                        }}
+                    }}
+                }}
+            }});
+        }});
+    </script>
+</body>
+</html>"""
+    
+    # Salvar o arquivo HTML
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print(f"Relatório HTML gerado com sucesso: {output_path}")
 
 
 def main():
