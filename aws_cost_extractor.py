@@ -931,9 +931,13 @@ class AWSCostExtractor:
             # Formatar colunas de serviços
             for col in df.columns:
                 if ' (USD)' in col:
-                    df[col] = df[col].map('${:,.2f}'.format)
-                elif col == '%':
-                    df[col] = df[col].map('{:.2f}%'.format)
+                    df[col] = df[col].apply(
+                        lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
+                    )
+                elif '%' in col:  # Para capturar qualquer coluna que contenha '%'
+                    df[col] = df[col].apply(
+                        lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
+                    )
             
             account_summary_display[account_id] = df
         
