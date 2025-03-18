@@ -738,4 +738,47 @@ def main():
     parser.add_argument('--sso-region', type=str,
                         help='Região do SSO se diferente da região principal')
     parser.add_argument('--preferred-roles', type=str, nargs='+',
-                        help='Lista de nomes de funções preferidas
+                        help='Lista de nomes de funções preferidas, em ordem de prioridade')
+    parser.add_argument('--format', choices=['excel', 'html', 'both'], default='both', 
+                        help='Formato do relatório: excel, html, ou both (ambos)')
+    parser.add_argument('--output-excel', type=str, default='aws_cost_report.xlsx',
+                        help='Caminho para salvar o relatório Excel')
+    parser.add_argument('--output-html', type=str, default='aws_cost_report.html',
+                        help='Caminho para salvar o relatório HTML')
+    
+    args = parser.parse_args()
+    
+    # Inicializar autenticador SSO
+    sso_auth = AWSSSOAuth(
+        start_url=args.start_url,
+        region=args.region,
+        sso_region=args.sso_region
+    )
+    
+    # Autenticar e obter token
+    print("Iniciando autenticação AWS SSO...")
+    access_token = sso_auth.authenticate()
+    
+    if not access_token:
+        print("Falha na autenticação. Encerrando.")
+        sys.exit(1)
+    
+    # Inicializar extrator de custos
+    extractor = AWSCostExtractor(sso_auth, access_token)
+    
+    # Extrair custos de todas as contas
+    print("Iniciando extração de custos da AWS...")
+    extractor.extract_all_accounts_cost(role_name_preference=args.preferred_roles)
+    
+    # Gerar relatórios conforme solicitado
+    if args.format in ['excel', 'both']:
+        extractor.generate_excel_report(output_path=args.output_excel)
+    
+    if args.format in ['html', 'both']:
+        extractor.generate_html_report(output_path=args.output_html)
+    
+    print("Processo concluído!")
+
+
+if __name__ == "__main__":
+    main()
