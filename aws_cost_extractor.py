@@ -632,7 +632,7 @@ class AWSCostExtractor:
             # Adicionar dados para cada um dos top 10 serviços desta conta
             for service_key in account['top_10_service_keys']:
                 account_summary_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
-                account_summary_data[f'%'] = account['service_total_percentages'][service_key]
+                account_summary_data[f'{service_key} (%)'] = account['service_total_percentages'][service_key]
             
             # Criar DataFrame de resumo para esta conta
             summary_df = pd.DataFrame([account_summary_data])
@@ -660,7 +660,7 @@ class AWSCostExtractor:
                     # Adicionar dados para cada um dos top 10 serviços desta conta
                     for service_key in account['top_10_service_keys']:
                         monthly_data[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                        monthly_data[f'%'] = account['service_percentages'][service_key][i]
+                        monthly_data[f'{service_key} (%)'] = account['service_percentages'][service_key][i]
                     
                     # Adicionar este mês ao DataFrame mensal da conta
                     account_monthly_dfs[month] = pd.DataFrame([monthly_data])
@@ -676,7 +676,7 @@ class AWSCostExtractor:
                     # Adicionar dados de serviços para o DataFrame de todos os meses
                     for service_key in account['top_10_service_keys']:
                         all_monthly_row[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                        all_monthly_row[f'{service_key} %'] = account['service_percentages'][service_key][i]
+                        all_monthly_row[f'{service_key} (%)'] = account['service_percentages'][service_key][i]
                     
                     all_monthly_data.append(all_monthly_row)
             
@@ -736,7 +736,8 @@ class AWSCostExtractor:
                         bottom=Side(style='thin')
                     ),
                     total_col_idx=df.columns.get_loc('Custo Total (USD)'),
-                    service_keys=[col.split(' ')[0] for col in df.columns if ' (USD)' in col]
+                    service_keys=[col.split(' ')[0] for col in df.columns if ' (USD)' in col],
+                    percent_cols=[col for col in df.columns if ' (%)' in col]
                 )
             
             # Adicionar abas mensais para cada conta
@@ -768,7 +769,8 @@ class AWSCostExtractor:
                             bottom=Side(style='thin')
                         ),
                         total_col_idx=df.columns.get_loc('Custo Total (USD)'),
-                        service_keys=[col.split(' ')[0] for col in df.columns if ' (USD)' in col]
+                        service_keys=[col.split(' ')[0] for col in df.columns if ' (USD)' in col],
+                        percent_cols=[col for col in df.columns if ' (%)' in col]
                     )
             
             # Adicionar a aba de todos os meses
@@ -786,7 +788,8 @@ class AWSCostExtractor:
                         bottom=Side(style='thin')
                     ),
                     total_col_idx=all_monthly_df.columns.get_loc('Custo Total (USD)'),
-                    service_keys=[col.split(' ')[0] for col in all_monthly_df.columns if ' (USD)' in col]
+                    service_keys=[col.split(' ')[0] for col in all_monthly_df.columns if ' (USD)' in col],
+                    percent_cols=[col for col in all_monthly_df.columns if ' (%)' in col]
                 )
             
             # Adicionar filtros a todas as planilhas
@@ -796,8 +799,7 @@ class AWSCostExtractor:
         
         print(f"Relatório Excel gerado com sucesso: {output_path}")
 
-
-    def _format_worksheet(self, worksheet, df, border, total_col_idx, service_keys):
+    def _format_worksheet(self, worksheet, df, border, total_col_idx, service_keys, percent_cols):
         """
         Formata uma planilha Excel.
         
@@ -807,6 +809,7 @@ class AWSCostExtractor:
             border: Estilo de borda
             total_col_idx: Índice da coluna de custo total
             service_keys: Lista de chaves dos serviços
+            percent_cols: Lista de colunas de percentuais
         """
         # Definir largura das colunas
         for idx, col in enumerate(df.columns):
@@ -830,7 +833,7 @@ class AWSCostExtractor:
             for col_idx, col_name in enumerate(df.columns, 1):
                 if ' (USD)' in col_name:
                     worksheet.cell(row=row, column=col_idx).number_format = '$#,##0.00'
-                elif '% ' in col_name or col_name.endswith(' %'):
+                elif ' (%)' in col_name or '% ' in col_name or col_name.endswith(' %'):
                     percent_cell = worksheet.cell(row=row, column=col_idx)
                     percent_cell.number_format = '0.00%'
                     
@@ -915,7 +918,7 @@ class AWSCostExtractor:
                     all_monthly_df_display[col] = all_monthly_df_display[col].apply(
                         lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
                     )
-                elif '%' in col:  # incluindo todas as colunas que contêm '%'
+                elif ' (%)' in col or '%' in col:  # incluindo todas as colunas que contêm '%'
                     all_monthly_df_display[col] = all_monthly_df_display[col].apply(
                         lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
                     )
@@ -934,7 +937,7 @@ class AWSCostExtractor:
                     df[col] = df[col].apply(
                         lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
                     )
-                elif '%' in col:  # Para capturar qualquer coluna que contenha '%'
+                elif ' (%)' in col or '%' in col:  # Para capturar qualquer coluna que contenha '%'
                     df[col] = df[col].apply(
                         lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
                     )
@@ -960,7 +963,7 @@ class AWSCostExtractor:
                         df_display[col] = df_display[col].apply(
                             lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
                         )
-                    elif '%' in col:  # Para capturar qualquer coluna que contenha '%'
+                    elif ' (%)' in col or '%' in col:  # Para capturar qualquer coluna que contenha '%'
                         df_display[col] = df_display[col].apply(
                             lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
                         )
@@ -1338,6 +1341,7 @@ class AWSCostExtractor:
     <body>
         <div class="container">
             <h1>Relatório de Custos AWS</h1>
+            <h1>Relatório de Custos AWS</h1>
             <div class="timestamp">Gerado em: {timestamp}</div>
             
             <div class="summary">
@@ -1398,8 +1402,8 @@ class AWSCostExtractor:
             // Variáveis globais para rastrear estado
             var activeMainTab = 'contas';
             var activeAccountId = '{summary_df_list[0]["account_id"] if summary_df_list else ""}';
-            var activeAccountViewTab = {{}}; // Para cada conta, qual visualização está ativa (resumo/mensal)
-            var activeMonthTab = {{}}; // Para cada conta, qual mês está ativo
+            var activeAccountViewTab = {}; // Para cada conta, qual visualização está ativa (resumo/mensal)
+            var activeMonthTab = {}; // Para cada conta, qual mês está ativo
             
             // Inicializar estado
             document.addEventListener('DOMContentLoaded', function() {{
