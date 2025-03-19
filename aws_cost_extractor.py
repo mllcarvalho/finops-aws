@@ -1433,55 +1433,60 @@ class AWSCostExtractor:
             }});
             
             function showTab(tabId) {{
-                // Ocultar todos os conteúdos
+                // Esconder todas as abas
                 var contents = document.getElementsByClassName('tab-content');
                 for (var i = 0; i < contents.length; i++) {{
                     contents[i].classList.remove('active');
                     contents[i].style.display = 'none';
                 }}
 
-                // Atualizar abas principais
+                // Remover classe ativa de todas as abas
                 var tabs = document.querySelectorAll('.tabs .tab');
                 for (var i = 0; i < tabs.length; i++) {{
                     tabs[i].classList.remove('active');
                 }}
 
-                // Mostrar conteúdo selecionado
-                document.getElementById(tabId).classList.add('active');
-                document.getElementById(tabId).style.display = 'block';
+                // Exibir a aba selecionada
+                var selectedContent = document.getElementById(tabId);
+                if (selectedContent) {{
+                    selectedContent.classList.add('active');
+                    selectedContent.style.display = 'block';
+                }}
 
-                // Atualizar aba ativa corretamente
-                var activeTab = document.querySelector('.tabs .tab[onclick="showTab(\'' + tabId + '\')"]');
+                // Destacar a aba ativa
+                var activeTab = document.querySelector(`.tabs .tab[onclick="showTab('${{tabId}}')"]`);
                 if (activeTab) {{
                     activeTab.classList.add('active');
                 }}
-
-                // Atualizar estado global
-                activeMainTab = tabId;
             }}
+
             
             function showAccountTab(accountId) {{
-                // Ocultar todos os conteúdos de conta
+                // Esconder todas as abas de contas
                 var accountContents = document.getElementsByClassName('account-content');
                 for (var i = 0; i < accountContents.length; i++) {{
                     accountContents[i].style.display = 'none';
                 }}
-                
-                // Atualizar abas de conta
+
+                // Remover classe ativa de todas as abas de conta
                 var accountTabs = document.getElementsByClassName('account-tab');
                 for (var i = 0; i < accountTabs.length; i++) {{
                     accountTabs[i].classList.remove('active');
                 }}
-                
-                // Mostrar conteúdo da conta selecionada
-                document.getElementById('account-' + accountId).style.display = 'block';
-                
-                // Atualizar aba ativa
-                document.getElementById('tab-account-' + accountId).classList.add('active');
-                
-                // Atualizar estado global
-                activeAccountId = accountId;
+
+                // Exibir a conta selecionada
+                var selectedAccount = document.getElementById('account-' + accountId);
+                if (selectedAccount) {{
+                    selectedAccount.style.display = 'block';
+                }}
+
+                // Destacar a aba ativa
+                var activeTab = document.getElementById('tab-account-' + accountId);
+                if (activeTab) {{
+                    activeTab.classList.add('active');
+                }}
             }}
+
             
             function showAccountViewTab(accountId, viewTabId) {{
                 // Ocultar todos os conteúdos de visualização
@@ -1507,27 +1512,31 @@ class AWSCostExtractor:
             }}
             
             function showAccountMonthTab(accountId, monthId) {{
-                // Ocultar todos os conteúdos de mês para esta conta
-                var monthContents = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-content');
+                // Esconder todas as abas de mês para esta conta
+                var monthContents = document.querySelectorAll(`#account-${{accountId}} .month-content`);
                 for (var i = 0; i < monthContents.length; i++) {{
                     monthContents[i].style.display = 'none';
                 }}
-                
-                // Atualizar abas de mês para esta conta
-                var monthTabs = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-tab');
+
+                // Remover classe ativa de todas as abas de mês
+                var monthTabs = document.querySelectorAll(`#account-${{accountId}} .month-tab`);
                 for (var i = 0; i < monthTabs.length; i++) {{
                     monthTabs[i].classList.remove('active');
                 }}
-                
-                // Mostrar conteúdo do mês selecionado
-                document.getElementById('month-' + accountId + '-' + monthId).style.display = 'block';
-                
-                // Atualizar aba ativa
-                document.getElementById('tab-' + accountId + '-' + monthId).classList.add('active');
-                
-                // Atualizar estado global
-                activeMonthTab[accountId] = monthId;
+
+                // Exibir o mês selecionado
+                var selectedMonth = document.getElementById(`month-${{accountId}}-${{monthId}}`);
+                if (selectedMonth) {{
+                    selectedMonth.style.display = 'block';
+                }}
+
+                // Destacar a aba ativa
+                var activeTab = document.getElementById(`tab-${{accountId}}-${{monthId}}`);
+                if (activeTab) {{
+                    activeTab.classList.add('active');
+                }}
             }}
+
             
             function filterTable(tableId, inputId) {{
                 var input, filter, table, tr, td, i, j, txtValue, found;
