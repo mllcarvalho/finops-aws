@@ -632,7 +632,7 @@ class AWSCostExtractor:
             # Adicionar dados para cada um dos top 10 serviços desta conta
             for service_key in account['top_10_service_keys']:
                 account_summary_data[f'{service_key} (USD)'] = account['service_totals'][service_key]
-                account_summary_data[f'{service_key} %'] = account['service_total_percentages'][service_key]
+                account_summary_data[f'%'] = account['service_total_percentages'][service_key]
             
             # Criar DataFrame de resumo para esta conta
             summary_df = pd.DataFrame([account_summary_data])
@@ -676,7 +676,7 @@ class AWSCostExtractor:
                     # Adicionar dados de serviços para o DataFrame de todos os meses
                     for service_key in account['top_10_service_keys']:
                         all_monthly_row[f'{service_key} (USD)'] = account['service_costs'][service_key][i]
-                        all_monthly_row[f'%'] = account['service_percentages'][service_key][i]
+                        all_monthly_row[f'{service_key} %'] = account['service_percentages'][service_key][i]
                     
                     all_monthly_data.append(all_monthly_row)
             
@@ -1743,4 +1743,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
