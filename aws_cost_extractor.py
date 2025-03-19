@@ -877,813 +877,812 @@ class AWSCostExtractor:
             )
     
     def generate_html_report(self, output_path="aws_cost_report.html"):
-        """
-        Gera um relatório HTML com os dados de custo extraídos.
+    """
+    Gera um relatório HTML com os dados de custo extraídos.
+    
+    Args:
+        output_path: Caminho para salvar o arquivo HTML
+    """
+    summary_df_list, monthly_dfs_list, all_monthly_df = self._prepare_excel_data_per_account()
+    
+    if not summary_df_list:
+        return
+    
+    # Combinar os resumos de todas as contas para a visualização principal
+    combined_summary_data = []
+    for account_summary in summary_df_list:
+        df = account_summary['df']
+        for _, row in df.iterrows():
+            combined_summary_data.append(row.to_dict())
+    
+    # Criar DataFrame combinado de resumo
+    if combined_summary_data:
+        combined_summary_df = pd.DataFrame(combined_summary_data)
+    else:
+        combined_summary_df = pd.DataFrame()
+    
+    # Formatar os dados para exibição HTML
+    all_monthly_df_display = all_monthly_df.copy() if not all_monthly_df.empty else pd.DataFrame()
+    
+    # Dicionário para versões formatadas dos DataFrames
+    account_summary_display = {}
+    account_monthly_display = {}
+    
+    # Formatar o DataFrame de todos os meses
+    if not all_monthly_df_display.empty:
+        all_monthly_df_display['Custo Total (USD)'] = all_monthly_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
         
-        Args:
-            output_path: Caminho para salvar o arquivo HTML
-        """
-        summary_df_list, monthly_dfs_list, all_monthly_df = self._prepare_excel_data_per_account()
+        # Formatar colunas de serviços
+        for col in all_monthly_df_display.columns:
+            if ' (USD)' in col:
+                all_monthly_df_display[col] = all_monthly_df_display[col].apply(
+                    lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
+                )
+            elif ' (%)' in col or '%' in col:  # incluindo todas as colunas que contêm '%'
+                all_monthly_df_display[col] = all_monthly_df_display[col].apply(
+                    lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
+                )
+    
+    # Formatar resumos por conta
+    for account_summary in summary_df_list:
+        account_id = account_summary['account_id']
+        df = account_summary['df'].copy()
         
-        if not summary_df_list:
-            return
+        # Formatar coluna de custo total
+        df['Custo Total (USD)'] = df['Custo Total (USD)'].map('${:,.2f}'.format)
         
-        # Combinar os resumos de todas as contas para a visualização principal
-        combined_summary_data = []
-        for account_summary in summary_df_list:
-            df = account_summary['df']
-            for _, row in df.iterrows():
-                combined_summary_data.append(row.to_dict())
+        # Formatar colunas de serviços
+        for col in df.columns:
+            if ' (USD)' in col:
+                df[col] = df[col].apply(
+                    lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
+                )
+            elif ' (%)' in col or '%' in col:  # Para capturar qualquer coluna que contenha '%'
+                df[col] = df[col].apply(
+                    lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
+                )
         
-        # Criar DataFrame combinado de resumo
-        if combined_summary_data:
-            combined_summary_df = pd.DataFrame(combined_summary_data)
-        else:
-            combined_summary_df = pd.DataFrame()
+        account_summary_display[account_id] = df
+    
+    # Formatar DataFrames mensais por conta
+    for account_monthly in monthly_dfs_list:
+        account_id = account_monthly['account_id']
+        monthly_dfs = account_monthly['monthly_dfs']
         
-        # Formatar os dados para exibição HTML
-        all_monthly_df_display = all_monthly_df.copy() if not all_monthly_df.empty else pd.DataFrame()
+        account_monthly_display[account_id] = {}
         
-        # Dicionário para versões formatadas dos DataFrames
-        account_summary_display = {}
-        account_monthly_display = {}
-        
-        # Formatar o DataFrame de todos os meses
-        if not all_monthly_df_display.empty:
-            all_monthly_df_display['Custo Total (USD)'] = all_monthly_df_display['Custo Total (USD)'].map('${:,.2f}'.format)
-            
-            # Formatar colunas de serviços
-            for col in all_monthly_df_display.columns:
-                if ' (USD)' in col:
-                    all_monthly_df_display[col] = all_monthly_df_display[col].apply(
-                        lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
-                    )
-                elif ' (%)' in col or '%' in col:  # incluindo todas as colunas que contêm '%'
-                    all_monthly_df_display[col] = all_monthly_df_display[col].apply(
-                        lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
-                    )
-        
-        # Formatar resumos por conta
-        for account_summary in summary_df_list:
-            account_id = account_summary['account_id']
-            df = account_summary['df'].copy()
+        for month, df in monthly_dfs.items():
+            df_display = df.copy()
             
             # Formatar coluna de custo total
-            df['Custo Total (USD)'] = df['Custo Total (USD)'].map('${:,.2f}'.format)
+            df_display['Custo Total (USD)'] = df_display['Custo Total (USD)'].map('${:,.2f}'.format)
             
             # Formatar colunas de serviços
-            for col in df.columns:
+            for col in df_display.columns:
                 if ' (USD)' in col:
-                    df[col] = df[col].apply(
+                    df_display[col] = df_display[col].apply(
                         lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
                     )
                 elif ' (%)' in col or '%' in col:  # Para capturar qualquer coluna que contenha '%'
-                    df[col] = df[col].apply(
+                    df_display[col] = df_display[col].apply(
                         lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
                     )
             
-            account_summary_display[account_id] = df
+            account_monthly_display[account_id][month] = df_display
+    
+    # Obter todos os meses únicos em ordem cronológica
+    all_months = []
+    for account_monthly in monthly_dfs_list:
+        monthly_dfs = account_monthly['monthly_dfs']
+        for month in monthly_dfs.keys():
+            if month not in all_months:
+                all_months.append(month)
+    
+    # Ordenar meses
+    all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'].index(x.split('/')[0])))
+    
+    # Gerar cabeçalhos de tabela para o resumo combinado
+    combined_headers = ''
+    if not combined_summary_df.empty:
+        combined_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in combined_summary_df.columns])
+    
+    # Gerar linhas da tabela de resumo combinado
+    combined_rows = []
+    if not combined_summary_df.empty:
+        for _, row in combined_summary_df.iterrows():
+            cells = []
+            for col, value in row.items():
+                cell_class = "cost-cell" if "USD" in col or "%" in col else ""
+                cells.append(f'<td class="{cell_class}">{value}</td>')
+            combined_rows.append('<tr>' + ''.join(cells) + '</tr>')
+    combined_table_body = ''.join(combined_rows)
+    
+    # Gerar cabeçalhos para a tabela de todos os meses
+    all_monthly_headers = ''
+    if not all_monthly_df_display.empty:
+        all_monthly_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in all_monthly_df_display.columns])
+    
+    # Gerar linhas da tabela de todos os meses
+    all_monthly_rows = []
+    if not all_monthly_df_display.empty:
+        for _, row in all_monthly_df_display.iterrows():
+            cells = []
+            for col, value in row.items():
+                cell_class = "cost-cell" if "USD" in col or "%" in col else ""
+                cells.append(f'<td class="{cell_class}">{value}</td>')
+            all_monthly_rows.append('<tr>' + ''.join(cells) + '</tr>')
+    all_monthly_table_body = ''.join(all_monthly_rows)
+    
+    # Gerar abas para as contas
+    account_tabs = []
+    for i, account_summary in enumerate(summary_df_list):
+        account_name = account_summary['account_name']
+        account_id = account_summary['account_id']
+        active_class = "" if i > 0 else "active"
+        account_tabs.append(f'<div class="tab account-tab {active_class}" id="tab-account-{account_id}" onclick="showAccountTab(\'{account_id}\')">{account_name}</div>')
+    account_tabs_html = ''.join(account_tabs)
+    
+    # Gerar conteúdo das abas de contas (resumo + meses)
+    account_contents = []
+    for i, account_summary in enumerate(summary_df_list):
+        account_id = account_summary['account_id']
+        account_name = account_summary['account_name']
         
-        # Formatar DataFrames mensais por conta
-        for account_monthly in monthly_dfs_list:
-            account_id = account_monthly['account_id']
-            monthly_dfs = account_monthly['monthly_dfs']
+        display_style = "block" if i == 0 else "none"
+        
+        # Gerar cabeçalhos de tabela para esta conta
+        summary_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in account_summary_display[account_id].columns])
+        
+        # Gerar linhas da tabela de resumo para esta conta
+        summary_rows = []
+        for _, row in account_summary_display[account_id].iterrows():
+            cells = []
+            for col, value in row.items():
+                cell_class = "cost-cell" if "USD" in col or "%" in col else ""
+                cells.append(f'<td class="{cell_class}">{value}</td>')
+            summary_rows.append('<tr>' + ''.join(cells) + '</tr>')
+        summary_table_body = ''.join(summary_rows)
+        
+        # Gerar abas para os meses desta conta
+        account_month_tabs = []
+        account_months = list(account_monthly_display[account_id].keys()) if account_id in account_monthly_display else []
+        
+        for j, month in enumerate(account_months):
+            month_active_class = "" if j > 0 else "active"
+            month_id = month.replace('/', '-')
+            account_month_tabs.append(f'<div class="tab month-tab {month_active_class}" id="tab-{account_id}-{month_id}" onclick="showAccountMonthTab(\'{account_id}\', \'{month_id}\')">{month}</div>')
+        account_month_tabs_html = ''.join(account_month_tabs)
+        
+        # Gerar conteúdo das abas mensais para esta conta
+        account_month_contents = []
+        for j, month in enumerate(account_months):
+            month_id = month.replace('/', '-')
+            month_display_style = "block" if j == 0 else "none"
             
-            account_monthly_display[account_id] = {}
+            # Gerar cabeçalhos para este mês e conta
+            monthly_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in account_monthly_display[account_id][month].columns])
             
-            for month, df in monthly_dfs.items():
-                df_display = df.copy()
-                
-                # Formatar coluna de custo total
-                df_display['Custo Total (USD)'] = df_display['Custo Total (USD)'].map('${:,.2f}'.format)
-                
-                # Formatar colunas de serviços
-                for col in df_display.columns:
-                    if ' (USD)' in col:
-                        df_display[col] = df_display[col].apply(
-                            lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x
-                        )
-                    elif ' (%)' in col or '%' in col:  # Para capturar qualquer coluna que contenha '%'
-                        df_display[col] = df_display[col].apply(
-                            lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) else x
-                        )
-                
-                account_monthly_display[account_id][month] = df_display
-        
-        # Obter todos os meses únicos em ordem cronológica
-        all_months = []
-        for account_monthly in monthly_dfs_list:
-            monthly_dfs = account_monthly['monthly_dfs']
-            for month in monthly_dfs.keys():
-                if month not in all_months:
-                    all_months.append(month)
-        
-        # Ordenar meses
-        all_months.sort(key=lambda x: (int(x.split('/')[1]), ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'].index(x.split('/')[0])))
-        
-        # Gerar cabeçalhos de tabela para o resumo combinado
-        combined_headers = ''
-        if not combined_summary_df.empty:
-            combined_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in combined_summary_df.columns])
-        
-        # Gerar linhas da tabela de resumo combinado
-        combined_rows = []
-        if not combined_summary_df.empty:
-            for _, row in combined_summary_df.iterrows():
+            # Gerar linhas da tabela para este mês e conta
+            monthly_rows = []
+            for _, row in account_monthly_display[account_id][month].iterrows():
                 cells = []
                 for col, value in row.items():
                     cell_class = "cost-cell" if "USD" in col or "%" in col else ""
                     cells.append(f'<td class="{cell_class}">{value}</td>')
-                combined_rows.append('<tr>' + ''.join(cells) + '</tr>')
-        combined_table_body = ''.join(combined_rows)
-        
-        # Gerar cabeçalhos para a tabela de todos os meses
-        all_monthly_headers = ''
-        if not all_monthly_df_display.empty:
-            all_monthly_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in all_monthly_df_display.columns])
-        
-        # Gerar linhas da tabela de todos os meses
-        all_monthly_rows = []
-        if not all_monthly_df_display.empty:
-            for _, row in all_monthly_df_display.iterrows():
-                cells = []
-                for col, value in row.items():
-                    cell_class = "cost-cell" if "USD" in col or "%" in col else ""
-                    cells.append(f'<td class="{cell_class}">{value}</td>')
-                all_monthly_rows.append('<tr>' + ''.join(cells) + '</tr>')
-        all_monthly_table_body = ''.join(all_monthly_rows)
-        
-        # Gerar abas para as contas
-        account_tabs = []
-        for i, account_summary in enumerate(summary_df_list):
-            account_name = account_summary['account_name']
-            account_id = account_summary['account_id']
-            active_class = "" if i > 0 else "active"
-            account_tabs.append(f'<div class="tab account-tab {active_class}" id="tab-account-{account_id}" onclick="showAccountTab(\'{account_id}\')">{account_name}</div>')
-        account_tabs_html = ''.join(account_tabs)
-        
-        # Gerar conteúdo das abas de contas (resumo + meses)
-        account_contents = []
-        for i, account_summary in enumerate(summary_df_list):
-            account_id = account_summary['account_id']
-            account_name = account_summary['account_name']
+                monthly_rows.append('<tr>' + ''.join(cells) + '</tr>')
+            monthly_table_body = ''.join(monthly_rows)
             
-            display_style = "block" if i == 0 else "none"
-            
-            # Gerar cabeçalhos de tabela para esta conta
-            summary_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in account_summary_display[account_id].columns])
-            
-            # Gerar linhas da tabela de resumo para esta conta
-            summary_rows = []
-            for _, row in account_summary_display[account_id].iterrows():
-                cells = []
-                for col, value in row.items():
-                    cell_class = "cost-cell" if "USD" in col or "%" in col else ""
-                    cells.append(f'<td class="{cell_class}">{value}</td>')
-                summary_rows.append('<tr>' + ''.join(cells) + '</tr>')
-            summary_table_body = ''.join(summary_rows)
-            
-            # Gerar abas para os meses desta conta
-            account_month_tabs = []
-            account_months = list(account_monthly_display[account_id].keys()) if account_id in account_monthly_display else []
-            
-            for j, month in enumerate(account_months):
-                month_active_class = "" if j > 0 else "active"
-                month_id = month.replace('/', '-')
-                account_month_tabs.append(f'<div class="tab month-tab {month_active_class}" id="tab-{account_id}-{month_id}" onclick="showAccountMonthTab(\'{account_id}\', \'{month_id}\')">{month}</div>')
-            account_month_tabs_html = ''.join(account_month_tabs)
-            
-            # Gerar conteúdo das abas mensais para esta conta
-            account_month_contents = []
-            for j, month in enumerate(account_months):
-                month_id = month.replace('/', '-')
-                month_display_style = "block" if j == 0 else "none"
-                
-                # Gerar cabeçalhos para este mês e conta
-                monthly_headers = ''.join([f'<th data-sort="{col}" class="sortable">{col}</th>' for col in account_monthly_display[account_id][month].columns])
-                
-                # Gerar linhas da tabela para este mês e conta
-                monthly_rows = []
-                for _, row in account_monthly_display[account_id][month].iterrows():
-                    cells = []
-                    for col, value in row.items():
-                        cell_class = "cost-cell" if "USD" in col or "%" in col else ""
-                        cells.append(f'<td class="{cell_class}">{value}</td>')
-                    monthly_rows.append('<tr>' + ''.join(cells) + '</tr>')
-                monthly_table_body = ''.join(monthly_rows)
-                
-                account_month_contents.append(f'''
-                <div id="month-{account_id}-{month_id}" class="month-content" style="display: {month_display_style};">
-                    <div style="overflow-x: auto;">
-                        <table id="table-{account_id}-{month_id}" class="sortable-table">
-                            <thead>
-                                <tr>
-                                    {monthly_headers}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {monthly_table_body}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>''')
-            account_month_contents_html = ''.join(account_month_contents)
-            
-            # Legenda dos serviços para esta conta
-            service_keys = [col.split(' ')[0] for col in account_summary_display[account_id].columns if ' (USD)' in col]
-            service_legend = []
-            for service_key in service_keys:
-                color = f'#{abs(hash(service_key)) % 0xffffff:06x}'
-                service_legend.append(f'<div class="service-item"><div class="service-color" style="background-color: {color}"></div>{service_key}</div>')
-            service_legend_html = ''.join(service_legend)
-            
-            # Montando o conteúdo da aba desta conta
-            account_contents.append(f'''
-            <div id="account-{account_id}" class="account-content" style="display: {display_style};">
-                <h2>Conta: {account_name} ({account_id})</h2>
-                
-                <input type="text" id="search-account-{account_id}" class="search" placeholder="Buscar..." onkeyup="filterAccountTable('{account_id}')">
-                
-                <div class="service-legend">
-                    <h3>Serviços para esta conta:</h3>
-                    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
-                        {service_legend_html}
-                    </div>
-                </div>
-                
-                <div class="tabs account-view-tabs">
-                    <div class="tab active" onclick="showAccountViewTab('{account_id}', 'resumo')">Resumo</div>
-                    <div class="tab" onclick="showAccountViewTab('{account_id}', 'mensal')">Detalhes por Mês</div>
-                </div>
-                
-                <div id="account-resumo-{account_id}" class="account-view-content" style="display: block;">
-                    <div style="overflow-x: auto;">
-                        <table id="resumo-table-{account_id}" class="sortable-table">
-                            <thead>
-                                <tr>
-                                    {summary_headers}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {summary_table_body}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                
-                <div id="account-mensal-{account_id}" class="account-view-content" style="display: none;">
-                    <div class="month-tabs">
-                        {account_month_tabs_html}
-                    </div>
-                    {account_month_contents_html}
+            account_month_contents.append(f'''
+            <div id="month-{account_id}-{month_id}" class="month-content" style="display: {month_display_style};">
+                <div style="overflow-x: auto;">
+                    <table id="table-{account_id}-{month_id}" class="sortable-table">
+                        <thead>
+                            <tr>
+                                {monthly_headers}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {monthly_table_body}
+                        </tbody>
+                    </table>
                 </div>
             </div>''')
-        account_contents_html = ''.join(account_contents)
+        account_month_contents_html = ''.join(account_month_contents)
         
-        # Gerar timestamp
-        timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        # Legenda dos serviços para esta conta
+        service_keys = [col.split(' ')[0] for col in account_summary_display[account_id].columns if ' (USD)' in col]
+        service_legend = []
+        for service_key in service_keys:
+            color = f'#{abs(hash(service_key)) % 0xffffff:06x}'
+            service_legend.append(f'<div class="service-item"><div class="service-color" style="background-color: {color}"></div>{service_key}</div>')
+        service_legend_html = ''.join(service_legend)
         
-        # Combinar tudo em um HTML
-        html_content = f"""<!DOCTYPE html>
-    <html lang="pt-br">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Relatório de Custos AWS</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 0;
-                padding: 20px;
-                color: #333;
-            }}
-            h1, h2, h3 {{
-                color: #0066cc;
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 0 auto;
-            }}
-            table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin-bottom: 30px;
-                font-size: 14px;
-            }}
-            th, td {{
-                text-align: left;
-                padding: 10px;
-                border: 1px solid #ddd;
-            }}
-            th {{
-                background-color: #0066cc;
-                color: white;
-                position: sticky;
-                top: 0;
-                z-index: 10;
-                cursor: pointer;
-            }}
-            th.sortable:hover {{
-                background-color: #0055aa;
-            }}
-            th.sortable:after {{
-                content: "\\00a0\\00a0\\00a0"; /* Espaço para o ícone de ordenação */
-            }}
-            th.sort-asc:after {{
-                content: "\\2191"; /* Seta para cima */
-            }}
-            th.sort-desc:after {{
-                content: "\\2193"; /* Seta para baixo */
-            }}
-            tr:nth-child(even) {{
-                background-color: #f5f5f5;
-            }}
-            tr:hover {{
-                background-color: #e9f1fa;
-            }}
-            .high-percentage {{
-                background-color: #FFEB9C;
-            }}
-            .timestamp {{
-                font-size: 0.8em;
-                color: #666;
-                margin-bottom: 20px;
-            }}
-            .summary {{
-                background-color: #f0f7ff;
-                padding: 15px;
-                border-radius: 5px;
-                margin-bottom: 20px;
-            }}
-            .tabs {{
-                display: flex;
-                margin-bottom: 20px;
-                border-bottom: 1px solid #ccc;
-            }}
-            .tab {{
-                padding: 10px 20px;
-                background-color: #ddd;
-                cursor: pointer;
-                border: 1px solid #ccc;
-                border-bottom: none;
-                border-radius: 5px 5px 0 0;
-                margin-right: 5px;
-            }}
-            .tab.active {{
-                background-color: #0066cc;
-                color: white;
-            }}
-            .tab-content {{
-                display: none;
-            }}
-            .tab-content.active {{
-                display: block;
-            }}
-            .month-tabs {{
-                display: flex;
-                flex-wrap: wrap;
-                margin-bottom: 20px;
-                border-bottom: 1px solid #ccc;
-            }}
-            .month-tab {{
-                padding: 8px 16px;
-                background-color: #eee;
-                cursor: pointer;
-                border: 1px solid #ddd;
-                border-bottom: none;
-                border-radius: 4px 4px 0 0;
-                margin-right: 4px;
-                margin-bottom: 0;
-                font-size: 0.9em;
-            }}
-            .month-tab.active {{
-                background-color: #4a86e8;
-                color: white;
-            }}
-            .month-content {{
-                margin-top: 20px;
-            }}
-            .search {{
-                padding: 10px;
-                margin-bottom: 20px;
-                width: 100%;
-                box-sizing: border-box;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-            }}
-            .cost-cell {{
-                text-align: right;
-            }}
-            .service-legend {{
-                margin-bottom: 20px;
-                display: flex;
-                flex-wrap: wrap;
-            }}
-            .service-item {{
-                margin-right: 20px;
-                margin-bottom: 10px;
-                display: flex;
-                align-items: center;
-            }}
-            .service-color {{
-                width: 20px;
-                height: 20px;
-                margin-right: 5px;
-                border-radius: 3px;
-            }}
-            .dashboard {{
-                display: flex;
-                flex-wrap: wrap;
-                gap: 20px;
-                margin-bottom: 20px;
-            }}
-            .dashboard-card {{
-                background-color: #fff;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                padding: 15px;
-                flex: 1;
-                min-width: 200px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }}
-            .card-title {{
-                font-size: 0.9em;
-                margin-bottom: 10px;
-                color: #666;
-            }}
-            .card-value {{
-                font-size: 1.8em;
-                font-weight: bold;
-                color: #0066cc;
-            }}
-            .account-tabs {{
-                display: flex;
-                flex-wrap: wrap;
-                margin-bottom: 20px;
-            }}
-            .account-tab {{
-                padding: 10px 15px;
-                margin-right: 5px;
-                margin-bottom: 5px;
-                font-size: 0.9em;
-            }}
-            .account-content {{
-                margin-top: 20px;
-            }}
-            .account-view-tabs {{
-                margin-bottom: 10px;
-            }}
-            .account-view-content {{
-                margin-bottom: 30px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Relatório de Custos AWS</h1>
-            <h1>Relatório de Custos AWS</h1>
-            <div class="timestamp">Gerado em: {timestamp}</div>
+        # Montando o conteúdo da aba desta conta
+        account_contents.append(f'''
+        <div id="account-{account_id}" class="account-content" style="display: {display_style};">
+            <h2>Conta: {account_name} ({account_id})</h2>
             
-            <div class="summary">
-                <h2>Resumo de Custos</h2>
-                <p>Total de Contas Analisadas: {len(summary_df_list)}</p>
-            </div>
+            <input type="text" id="search-account-{account_id}" class="search" placeholder="Buscar..." onkeyup="filterAccountTable('{account_id}')">
             
-            <div class="tabs">
-                <div class="tab active" onclick="showTab('contas')">Por Conta</div>
-                <div class="tab" onclick="showTab('resumo')">Resumo Geral</div>
-                <div class="tab" onclick="showTab('todos-meses')">Todos os Meses</div>
-            </div>
-            
-            <div id="contas" class="tab-content active">
-                <div class="account-tabs">
-                    {account_tabs_html}
+            <div class="service-legend">
+                <h3>Serviços para esta conta:</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
+                    {service_legend_html}
                 </div>
-                
-                {account_contents_html}
             </div>
             
-            <div id="resumo" class="tab-content">
-                <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
-                
+            <div class="tabs account-view-tabs">
+                <div class="tab active" onclick="showAccountViewTab('{account_id}', 'resumo')">Resumo</div>
+                <div class="tab" onclick="showAccountViewTab('{account_id}', 'mensal')">Detalhes por Mês</div>
+            </div>
+            
+            <div id="account-resumo-{account_id}" class="account-view-content" style="display: block;">
                 <div style="overflow-x: auto;">
-                    <table id="resumoTable" class="sortable-table">
+                    <table id="resumo-table-{account_id}" class="sortable-table">
                         <thead>
                             <tr>
-                                {combined_headers}
+                                {summary_headers}
                             </tr>
                         </thead>
                         <tbody>
-                            {combined_table_body}
+                            {summary_table_body}
                         </tbody>
                     </table>
                 </div>
             </div>
             
-            <div id="todos-meses" class="tab-content">
-                <input type="text" id="searchTodosMeses" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('todosMesesTable', 'searchTodosMeses')">
-                
-                <div style="overflow-x: auto;">
-                    <table id="todosMesesTable" class="sortable-table">
-                        <thead>
-                            <tr>
-                                {all_monthly_headers}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {all_monthly_table_body}
-                        </tbody>
-                    </table>
+            <div id="account-mensal-{account_id}" class="account-view-content" style="display: none;">
+                <div class="month-tabs">
+                    {account_month_tabs_html}
                 </div>
+                {account_month_contents_html}
+            </div>
+        </div>''')
+    account_contents_html = ''.join(account_contents)
+    
+    # Gerar timestamp
+    timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    
+    # Combinar tudo em um HTML - usando chaves duplas para código JavaScript e CSS
+    html_content = f"""<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório de Custos AWS</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }}
+        h1, h2, h3 {{
+            color: #0066cc;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        table {{
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }}
+        th, td {{
+            text-align: left;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }}
+        th {{
+            background-color: #0066cc;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            cursor: pointer;
+        }}
+        th.sortable:hover {{
+            background-color: #0055aa;
+        }}
+        th.sortable:after {{
+            content: "\\00a0\\00a0\\00a0"; /* Espaço para o ícone de ordenação */
+        }}
+        th.sort-asc:after {{
+            content: "\\2191"; /* Seta para cima */
+        }}
+        th.sort-desc:after {{
+            content: "\\2193"; /* Seta para baixo */
+        }}
+        tr:nth-child(even) {{
+            background-color: #f5f5f5;
+        }}
+        tr:hover {{
+            background-color: #e9f1fa;
+        }}
+        .high-percentage {{
+            background-color: #FFEB9C;
+        }}
+        .timestamp {{
+            font-size: 0.8em;
+            color: #666;
+            margin-bottom: 20px;
+        }}
+        .summary {{
+            background-color: #f0f7ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }}
+        .tabs {{
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ccc;
+        }}
+        .tab {{
+            padding: 10px 20px;
+            background-color: #ddd;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-bottom: none;
+            border-radius: 5px 5px 0 0;
+            margin-right: 5px;
+        }}
+        .tab.active {{
+            background-color: #0066cc;
+            color: white;
+        }}
+        .tab-content {{
+            display: none;
+        }}
+        .tab-content.active {{
+            display: block;
+        }}
+        .month-tabs {{
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ccc;
+        }}
+        .month-tab {{
+            padding: 8px 16px;
+            background-color: #eee;
+            cursor: pointer;
+            border: 1px solid #ddd;
+            border-bottom: none;
+            border-radius: 4px 4px 0 0;
+            margin-right: 4px;
+            margin-bottom: 0;
+            font-size: 0.9em;
+        }}
+        .month-tab.active {{
+            background-color: #4a86e8;
+            color: white;
+        }}
+        .month-content {{
+            margin-top: 20px;
+        }}
+        .search {{
+            padding: 10px;
+            margin-bottom: 20px;
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }}
+        .cost-cell {{
+            text-align: right;
+        }}
+        .service-legend {{
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+        }}
+        .service-item {{
+            margin-right: 20px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }}
+        .service-color {{
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+            border-radius: 3px;
+        }}
+        .dashboard {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 20px;
+        }}
+        .dashboard-card {{
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            flex: 1;
+            min-width: 200px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        .card-title {{
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            color: #666;
+        }}
+        .card-value {{
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #0066cc;
+        }}
+        .account-tabs {{
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }}
+        .account-tab {{
+            padding: 10px 15px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }}
+        .account-content {{
+            margin-top: 20px;
+        }}
+        .account-view-tabs {{
+            margin-bottom: 10px;
+        }}
+        .account-view-content {{
+            margin-bottom: 30px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Relatório de Custos AWS</h1>
+        <div class="timestamp">Gerado em: {timestamp}</div>
+        
+        <div class="summary">
+            <h2>Resumo de Custos</h2>
+            <p>Total de Contas Analisadas: {len(summary_df_list)}</p>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('contas')">Por Conta</div>
+            <div class="tab" onclick="showTab('resumo')">Resumo Geral</div>
+            <div class="tab" onclick="showTab('todos-meses')">Todos os Meses</div>
+        </div>
+        
+        <div id="contas" class="tab-content active">
+            <div class="account-tabs">
+                {account_tabs_html}
+            </div>
+            
+            {account_contents_html}
+        </div>
+        
+        <div id="resumo" class="tab-content">
+            <input type="text" id="searchResumo" class="search" placeholder="Buscar por conta..." onkeyup="filterTable('resumoTable', 'searchResumo')">
+            
+            <div style="overflow-x: auto;">
+                <table id="resumoTable" class="sortable-table">
+                    <thead>
+                        <tr>
+                            {combined_headers}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {combined_table_body}
+                    </tbody>
+                </table>
             </div>
         </div>
         
-        <script>
-            // Variáveis globais para rastrear estado
-            var activeMainTab = 'contas';
-            var activeAccountId = '{summary_df_list[0]["account_id"] if summary_df_list else ""}';
-            var activeAccountViewTab = {}; // Para cada conta, qual visualização está ativa (resumo/mensal)
-            var activeMonthTab = {}; // Para cada conta, qual mês está ativo
+        <div id="todos-meses" class="tab-content">
+            <input type="text" id="searchTodosMeses" class="search" placeholder="Buscar por conta ou mês..." onkeyup="filterTable('todosMesesTable', 'searchTodosMeses')">
             
-            // Inicializar estado
-            document.addEventListener('DOMContentLoaded', function() {{
-                // Inicializar estados para cada conta
-                const accountContents = document.querySelectorAll('.account-content');
-                for (let i = 0; i < accountContents.length; i++) {{
-                    const accountId = accountContents[i].id.replace('account-', '');
-                    activeAccountViewTab[accountId] = 'resumo';
-                    
-                    // Encontrar o primeiro mês para cada conta
-                    const monthTabs = document.querySelectorAll('.month-tab[id^="tab-' + accountId + '"]');
-                    if (monthTabs.length > 0) {{
-                        const firstMonthId = monthTabs[0].id.split('-').slice(2).join('-');
-                        activeMonthTab[accountId] = firstMonthId;
-                    }}
+            <div style="overflow-x: auto;">
+                <table id="todosMesesTable" class="sortable-table">
+                    <thead>
+                        <tr>
+                            {all_monthly_headers}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {all_monthly_table_body}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Variáveis globais para rastrear estado
+        var activeMainTab = 'contas';
+        var activeAccountId = '{summary_df_list[0]["account_id"] if summary_df_list else ""}';
+        var activeAccountViewTab = {{}};  // Para cada conta, qual visualização está ativa (resumo/mensal)
+        var activeMonthTab = {{}};  // Para cada conta, qual mês está ativo
+        
+        // Inicializar estado
+        document.addEventListener('DOMContentLoaded', function() {{
+            // Inicializar estados para cada conta
+            const accountContents = document.querySelectorAll('.account-content');
+            for (let i = 0; i < accountContents.length; i++) {{
+                const accountId = accountContents[i].id.replace('account-', '');
+                activeAccountViewTab[accountId] = 'resumo';
+                
+                // Encontrar o primeiro mês para cada conta
+                const monthTabs = document.querySelectorAll('.month-tab[id^="tab-' + accountId + '"]');
+                if (monthTabs.length > 0) {{
+                    const firstMonthId = monthTabs[0].id.split('-').slice(2).join('-');
+                    activeMonthTab[accountId] = firstMonthId;
                 }}
-                
-                // Destacar células com percentuais altos
-                highlightHighPercentages();
-                
-                // Inicializar a funcionalidade de ordenação para todas as tabelas
-                initSortableTables();
-            }});
-            
-            function showTab(tabId) {{
-                // Ocultar todos os conteúdos
-                var contents = document.getElementsByClassName('tab-content');
-                for (var i = 0; i < contents.length; i++) {{
-                    contents[i].classList.remove('active');
-                    contents[i].style.display = 'none';
-                }}
-                
-                // Atualizar abas principais
-                var tabs = document.querySelector('.tabs').querySelectorAll('.tab');
-                for (var i = 0; i < tabs.length; i++) {{
-                    tabs[i].classList.remove('active');
-                }}
-                
-                // Mostrar conteúdo selecionado
-                document.getElementById(tabId).classList.add('active');
-                document.getElementById(tabId).style.display = 'block';
-                
-                // Atualizar aba ativa
-                event.currentTarget.classList.add('active');
-                
-                // Atualizar estado global
-                activeMainTab = tabId;
             }}
             
-            function showAccountTab(accountId) {{
-                // Ocultar todos os conteúdos de conta
-                var accountContents = document.getElementsByClassName('account-content');
-                for (var i = 0; i < accountContents.length; i++) {{
-                    accountContents[i].style.display = 'none';
-                }}
-                
-                // Atualizar abas de conta
-                var accountTabs = document.getElementsByClassName('account-tab');
-                for (var i = 0; i < accountTabs.length; i++) {{
-                    accountTabs[i].classList.remove('active');
-                }}
-                
-                // Mostrar conteúdo da conta selecionada
-                document.getElementById('account-' + accountId).style.display = 'block';
-                
-                // Atualizar aba ativa
-                document.getElementById('tab-account-' + accountId).classList.add('active');
-                
-                // Atualizar estado global
-                activeAccountId = accountId;
+            // Destacar células com percentuais altos
+            highlightHighPercentages();
+            
+            // Inicializar a funcionalidade de ordenação para todas as tabelas
+            initSortableTables();
+        }});
+        
+        function showTab(tabId) {{
+            // Ocultar todos os conteúdos
+            var contents = document.getElementsByClassName('tab-content');
+            for (var i = 0; i < contents.length; i++) {{
+                contents[i].classList.remove('active');
+                contents[i].style.display = 'none';
             }}
             
-            function showAccountViewTab(accountId, viewTabId) {{
-                // Ocultar todos os conteúdos de visualização
-                var viewContents = document.getElementById('account-' + accountId).querySelectorAll('.account-view-content');
-                for (var i = 0; i < viewContents.length; i++) {{
-                    viewContents[i].style.display = 'none';
-                }}
-                
-                // Atualizar abas de visualização
-                var viewTabs = document.getElementById('account-' + accountId).querySelectorAll('.account-view-tabs .tab');
-                for (var i = 0; i < viewTabs.length; i++) {{
-                    viewTabs[i].classList.remove('active');
-                }}
-                
-                // Mostrar conteúdo da visualização selecionada
-                document.getElementById('account-' + viewTabId + '-' + accountId).style.display = 'block';
-                
-                // Atualizar aba ativa (clicar no segundo filho da account-view-tabs)
-                event.currentTarget.classList.add('active');
-                
-                // Atualizar estado global
-                activeAccountViewTab[accountId] = viewTabId;
+            // Atualizar abas principais
+            var tabs = document.querySelector('.tabs').querySelectorAll('.tab');
+            for (var i = 0; i < tabs.length; i++) {{
+                tabs[i].classList.remove('active');
             }}
             
-            function showAccountMonthTab(accountId, monthId) {{
-                // Ocultar todos os conteúdos de mês para esta conta
-                var monthContents = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-content');
-                for (var i = 0; i < monthContents.length; i++) {{
-                    monthContents[i].style.display = 'none';
-                }}
-                
-                // Atualizar abas de mês para esta conta
-                var monthTabs = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-tab');
-                for (var i = 0; i < monthTabs.length; i++) {{
-                    monthTabs[i].classList.remove('active');
-                }}
-                
-                // Mostrar conteúdo do mês selecionado
-                document.getElementById('month-' + accountId + '-' + monthId).style.display = 'block';
-                
-                // Atualizar aba ativa
-                document.getElementById('tab-' + accountId + '-' + monthId).classList.add('active');
-                
-                // Atualizar estado global
-                activeMonthTab[accountId] = monthId;
+            // Mostrar conteúdo selecionado
+            document.getElementById(tabId).classList.add('active');
+            document.getElementById(tabId).style.display = 'block';
+            
+            // Atualizar aba ativa
+            event.currentTarget.classList.add('active');
+            
+            // Atualizar estado global
+            activeMainTab = tabId;
+        }}
+        
+        function showAccountTab(accountId) {{
+            // Ocultar todos os conteúdos de conta
+            var accountContents = document.getElementsByClassName('account-content');
+            for (var i = 0; i < accountContents.length; i++) {{
+                accountContents[i].style.display = 'none';
             }}
             
-            function filterTable(tableId, inputId) {{
-                var input, filter, table, tr, td, i, j, txtValue, found;
-                input = document.getElementById(inputId);
-                filter = input.value.toUpperCase();
-                table = document.getElementById(tableId);
-                tr = table.getElementsByTagName("tr");
+            // Atualizar abas de conta
+            var accountTabs = document.getElementsByClassName('account-tab');
+            for (var i = 0; i < accountTabs.length; i++) {{
+                accountTabs[i].classList.remove('active');
+            }}
+            
+            // Mostrar conteúdo da conta selecionada
+            document.getElementById('account-' + accountId).style.display = 'block';
+            
+            // Atualizar aba ativa
+            document.getElementById('tab-account-' + accountId).classList.add('active');
+            
+            // Atualizar estado global
+            activeAccountId = accountId;
+        }}
+        
+        function showAccountViewTab(accountId, viewTabId) {{
+            // Ocultar todos os conteúdos de visualização
+            var viewContents = document.getElementById('account-' + accountId).querySelectorAll('.account-view-content');
+            for (var i = 0; i < viewContents.length; i++) {{
+                viewContents[i].style.display = 'none';
+            }}
+            
+            // Atualizar abas de visualização
+            var viewTabs = document.getElementById('account-' + accountId).querySelectorAll('.account-view-tabs .tab');
+            for (var i = 0; i < viewTabs.length; i++) {{
+                viewTabs[i].classList.remove('active');
+            }}
+            
+            // Mostrar conteúdo da visualização selecionada
+            document.getElementById('account-' + viewTabId + '-' + accountId).style.display = 'block';
+            
+            // Atualizar aba ativa (clicar no segundo filho da account-view-tabs)
+            event.currentTarget.classList.add('active');
+            
+            // Atualizar estado global
+            activeAccountViewTab[accountId] = viewTabId;
+        }}
+        
+        function showAccountMonthTab(accountId, monthId) {{
+            // Ocultar todos os conteúdos de mês para esta conta
+            var monthContents = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-content');
+            for (var i = 0; i < monthContents.length; i++) {{
+                monthContents[i].style.display = 'none';
+            }}
+            
+            // Atualizar abas de mês para esta conta
+            var monthTabs = document.getElementById('account-mensal-' + accountId).querySelectorAll('.month-tab');
+            for (var i = 0; i < monthTabs.length; i++) {{
+                monthTabs[i].classList.remove('active');
+            }}
+            
+            // Mostrar conteúdo do mês selecionado
+            document.getElementById('month-' + accountId + '-' + monthId).style.display = 'block';
+            
+            // Atualizar aba ativa
+            document.getElementById('tab-' + accountId + '-' + monthId).classList.add('active');
+            
+            // Atualizar estado global
+            activeMonthTab[accountId] = monthId;
+        }}
+        
+        function filterTable(tableId, inputId) {{
+            var input, filter, table, tr, td, i, j, txtValue, found;
+            input = document.getElementById(inputId);
+            filter = input.value.toUpperCase();
+            table = document.getElementById(tableId);
+            tr = table.getElementsByTagName("tr");
+            
+            for (i = 1; i < tr.length; i++) {{
+                found = false;
+                td = tr[i].getElementsByTagName("td");
                 
-                for (i = 1; i < tr.length; i++) {{
-                    found = false;
-                    td = tr[i].getElementsByTagName("td");
-                    
-                    for (j = 0; j < 3; j++) {{
-                        if (td[j]) {{
-                            txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
-                                found = true;
-                                break;
-                            }}
+                for (j = 0; j < 3; j++) {{
+                    if (td[j]) {{
+                        txtValue = td[j].textContent || td[j].innerText;
+                        if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                            found = true;
+                            break;
                         }}
                     }}
-                    
-                    if (found) {{
-                        tr[i].style.display = "";
-                    }} else {{
-                        tr[i].style.display = "none";
-                    }}
+                }}
+                
+                if (found) {{
+                    tr[i].style.display = "";
+                }} else {{
+                    tr[i].style.display = "none";
                 }}
             }}
+        }}
+        
+        function filterAccountTable(accountId) {{
+            const tableId = 'resumo-table-' + accountId;
+            const inputId = 'search-account-' + accountId;
             
-            function filterAccountTable(accountId) {{
-                const tableId = 'resumo-table-' + accountId;
-                const inputId = 'search-account-' + accountId;
+            var input, filter, table, tr, td, i, j, txtValue, found;
+            input = document.getElementById(inputId);
+            filter = input.value.toUpperCase();
+            table = document.getElementById(tableId);
+            tr = table.getElementsByTagName("tr");
+            
+            for (i = 1; i < tr.length; i++) {{
+                found = false;
+                td = tr[i].getElementsByTagName("td");
                 
-                var input, filter, table, tr, td, i, j, txtValue, found;
-                input = document.getElementById(inputId);
-                filter = input.value.toUpperCase();
-                table = document.getElementById(tableId);
-                tr = table.getElementsByTagName("tr");
-                
-                for (i = 1; i < tr.length; i++) {{
-                    found = false;
-                    td = tr[i].getElementsByTagName("td");
-                    
-                    for (j = 0; j < td.length; j++) {{
-                        if (td[j]) {{
-                            txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
-                                found = true;
-                                break;
-                            }}
+                for (j = 0; j < td.length; j++) {{
+                    if (td[j]) {{
+                        txtValue = td[j].textContent || td[j].innerText;
+                        if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                            found = true;
+                            break;
                         }}
                     }}
-                    
-                    if (found) {{
-                        tr[i].style.display = "";
-                    }} else {{
-                        tr[i].style.display = "none";
-                    }}
+                }}
+                
+                if (found) {{
+                    tr[i].style.display = "";
+                }} else {{
+                    tr[i].style.display = "none";
                 }}
             }}
-            
-            function highlightHighPercentages() {{
-                const tables = document.querySelectorAll('table');
-                tables.forEach(table => {{
-                    const headerRow = table.querySelector('tr');
-                    if (!headerRow) return;
-                    
-                    const headers = headerRow.querySelectorAll('th');
-                    
-                    for (let i = 0; i < headers.length; i++) {{
-                        if (headers[i].textContent.includes('%')) {{
-                            const colIndex = i;
-                            
-                            const rows = table.querySelectorAll('tbody tr');
-                            for (let j = 0; j < rows.length; j++) {{
-                                const cell = rows[j].querySelectorAll('td')[colIndex];
-                                if (cell) {{
-                                    const percentText = cell.textContent.trim();
-                                    const percentValue = parseFloat(percentText);
-                                    if (!isNaN(percentValue) && percentValue > 10) {{
-                                        cell.classList.add('high-percentage');
-                                    }}
+        }}
+        
+        function highlightHighPercentages() {{
+            const tables = document.querySelectorAll('table');
+            tables.forEach(table => {{
+                const headerRow = table.querySelector('tr');
+                if (!headerRow) return;
+                
+                const headers = headerRow.querySelectorAll('th');
+                
+                for (let i = 0; i < headers.length; i++) {{
+                    if (headers[i].textContent.includes('%')) {{
+                        const colIndex = i;
+                        
+                        const rows = table.querySelectorAll('tbody tr');
+                        for (let j = 0; j < rows.length; j++) {{
+                            const cell = rows[j].querySelectorAll('td')[colIndex];
+                            if (cell) {{
+                                const percentText = cell.textContent.trim();
+                                const percentValue = parseFloat(percentText);
+                                if (!isNaN(percentValue) && percentValue > 10) {{
+                                    cell.classList.add('high-percentage');
                                 }}
                             }}
                         }}
                     }}
-                }});
-            }}
+                }}
+            }});
+        }}
+        
+        // Função para inicializar a ordenação em todas as tabelas
+        function initSortableTables() {{
+            const sortableTables = document.querySelectorAll('.sortable-table');
             
-            // Função para inicializar a ordenação em todas as tabelas
-            function initSortableTables() {{
-                const sortableTables = document.querySelectorAll('.sortable-table');
+            sortableTables.forEach(table => {{
+                const headers = table.querySelectorAll('th.sortable');
                 
-                sortableTables.forEach(table => {{
-                    const headers = table.querySelectorAll('th.sortable');
-                    
-                    headers.forEach((header, index) => {{
-                        header.addEventListener('click', function() {{
-                            sortTable(table, index, this);
-                        }});
+                headers.forEach((header, index) => {{
+                    header.addEventListener('click', function() {{
+                        sortTable(table, index, this);
                     }});
                 }});
-            }}
-            
-            // Função para ordenar uma tabela
-            function sortTable(table, colIndex, header) {{
-                const rows = Array.from(table.querySelectorAll('tbody tr'));
-                const thead = table.querySelector('thead');
-                const headers = thead.querySelectorAll('th');
-                const isAsc = header.classList.contains('sort-asc');
-                
-                // Remover classes de ordenação de todos os cabeçalhos
-                headers.forEach(h => {{
-                    h.classList.remove('sort-asc', 'sort-desc');
-                }});
-                
-                // Adicionar classe de ordenação ao cabeçalho atual
-                header.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
-                
-                // Ordenar as linhas
-                rows.sort((a, b) => {{
-                    const cellA = a.querySelectorAll('td')[colIndex].textContent.trim();
-                    const cellB = b.querySelectorAll('td')[colIndex].textContent.trim();
-                    
-                    // Verificar se a célula contém um valor monetário (começa com $)
-                    if (cellA.startsWith('$') && cellB.startsWith('$')) {{
-                        // Remover $ e vírgulas, depois converter para número
-                        const numA = parseFloat(cellA.replace(/[$,]/g, ''));
-                        const numB = parseFloat(cellB.replace(/[$,]/g, ''));
-                        return isAsc ? numB - numA : numA - numB;
-                    }}
-                    // Verificar se a célula contém uma porcentagem
-                    else if (cellA.endsWith('%') && cellB.endsWith('%')) {{
-                        const numA = parseFloat(cellA);
-                        const numB = parseFloat(cellB);
-                        return isAsc ? numB - numA : numA - numB;
-                    }}
-                    // Ordenação padrão como texto
-                    else {{
-                        return isAsc ? 
-                            cellB.localeCompare(cellA, undefined, {{numeric: true, sensitivity: 'base'}}) :
-                            cellA.localeCompare(cellB, undefined, {{numeric: true, sensitivity: 'base'}});
-                    }}
-                }});
-                
-                // Reconstruir a tabela com linhas ordenadas
-                const tbody = table.querySelector('tbody');
-                tbody.innerHTML = '';
-                
-                rows.forEach(row => {{
-                    tbody.appendChild(row);
-                }});
-            }}
-        </script>
-    </body>
-    </html>"""
-            
-        # Salvar o arquivo HTML
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+            }});
+        }}
         
-        print(f"Relatório HTML gerado com sucesso: {output_path}")
+        // Função para ordenar uma tabela
+        function sortTable(table, colIndex, header) {{
+            const rows = Array.from(table.querySelectorAll('tbody tr'));
+            const thead = table.querySelector('thead');
+            const headers = thead.querySelectorAll('th');
+            const isAsc = header.classList.contains('sort-asc');
+            
+            // Remover classes de ordenação de todos os cabeçalhos
+            headers.forEach(h => {{
+                h.classList.remove('sort-asc', 'sort-desc');
+            }});
+            
+            // Adicionar classe de ordenação ao cabeçalho atual
+            header.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
+            
+            // Ordenar as linhas
+            rows.sort((a, b) => {{
+                const cellA = a.querySelectorAll('td')[colIndex].textContent.trim();
+                const cellB = b.querySelectorAll('td')[colIndex].textContent.trim();
+                
+                // Verificar se a célula contém um valor monetário (começa com $)
+                if (cellA.startsWith('$') && cellB.startsWith('$')) {{
+                    // Remover $ e vírgulas, depois converter para número
+                    const numA = parseFloat(cellA.replace(/[$,]/g, ''));
+                    const numB = parseFloat(cellB.replace(/[$,]/g, ''));
+                    return isAsc ? numB - numA : numA - numB;
+                }}
+                // Verificar se a célula contém uma porcentagem
+                else if (cellA.endsWith('%') && cellB.endsWith('%')) {{
+                    const numA = parseFloat(cellA);
+                    const numB = parseFloat(cellB);
+                    return isAsc ? numB - numA : numA - numB;
+                }}
+                // Ordenação padrão como texto
+                else {{
+                    return isAsc ? 
+                        cellB.localeCompare(cellA, undefined, {{numeric: true, sensitivity: 'base'}}) :
+                        cellA.localeCompare(cellB, undefined, {{numeric: true, sensitivity: 'base'}}));
+                }}
+            }});
+            
+            // Reconstruir a tabela com linhas ordenadas
+            const tbody = table.querySelector('tbody');
+            tbody.innerHTML = '';
+            
+            rows.forEach(row => {{
+                tbody.appendChild(row);
+            }});
+        }}
+    </script>
+</body>
+</html>"""
+        
+    # Salvar o arquivo HTML
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print(f"Relatório HTML gerado com sucesso: {output_path}")
 
 
 def main():
