@@ -522,6 +522,11 @@ class AWSCostExtractor:
             except re.error as e:
                 print(f"Erro na expressão regular: {str(e)}. Ignorando filtro.")
         
+        # Remover contas que terminam com "-too"
+        accounts = [account for account in accounts if not account['accountName'].lower().endswith('-too')]
+
+        print(f"Após filtro de '-too', {len(accounts)} contas restantes para processamento.")
+        
         # Limitar número de contas se especificado
         if max_accounts and max_accounts > 0 and max_accounts < len(accounts):
             accounts = accounts[:max_accounts]
