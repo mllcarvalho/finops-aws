@@ -1434,20 +1434,23 @@ class AWSCostExtractor:
                     contents[i].classList.remove('active');
                     contents[i].style.display = 'none';
                 }}
-                
+
                 // Atualizar abas principais
-                var tabs = document.querySelector('.tabs').querySelectorAll('.tab');
+                var tabs = document.querySelectorAll('.tabs .tab');
                 for (var i = 0; i < tabs.length; i++) {{
                     tabs[i].classList.remove('active');
                 }}
-                
+
                 // Mostrar conteúdo selecionado
                 document.getElementById(tabId).classList.add('active');
                 document.getElementById(tabId).style.display = 'block';
-                
-                // Atualizar aba ativa
-                event.currentTarget.classList.add('active');
-                
+
+                // Atualizar aba ativa corretamente
+                var activeTab = document.querySelector('.tabs .tab[onclick="showTab(\'' + tabId + '\')"]');
+                if (activeTab) {{
+                    activeTab.classList.add('active');
+                }}
+
                 // Atualizar estado global
                 activeMainTab = tabId;
             }}
