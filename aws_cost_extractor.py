@@ -1024,7 +1024,7 @@ class AWSCostExtractor:
             account_name = account_summary['account_name']
             account_id = account_summary['account_id']
             active_class = "" if i > 0 else "active"
-            account_tabs.append(f'<div class="tab account-tab {active_class}" id="tab-account-{account_id}" onclick="showAccountTab(\'{account_id}\')">{account_name}</div>')
+            account_tabs.append(f'<div class="tab account-tab {active_class}" data-account="{account_id}">{account_name}</div>')
         account_tabs_html = ''.join(account_tabs)
         
         # Gerar conteúdo das abas de contas (resumo + meses)
@@ -1055,7 +1055,7 @@ class AWSCostExtractor:
             for j, month in enumerate(account_months):
                 month_active_class = "" if j > 0 else "active"
                 month_id = month.replace('/', '-')
-                account_month_tabs.append(f'<div class="tab month-tab {month_active_class}" id="tab-{account_id}-{month_id}" onclick="showAccountMonthTab(\'{account_id}\', \'{month_id}\')">{month}</div>')
+                account_month_tabs.append(f'<div class="tab month-tab {month_active_class}" data-month="{account_id}-{month_id}">{month}</div>')
             account_month_tabs_html = ''.join(account_month_tabs)
             
             # Gerar conteúdo das abas mensais para esta conta
@@ -1078,7 +1078,7 @@ class AWSCostExtractor:
                 monthly_table_body = ''.join(monthly_rows)
                 
                 account_month_contents.append(f'''
-                <div id="month-{account_id}-{month_id}" class="month-content" style="display: {month_display_style};">
+                <div id="{account_id}-{month_id}" class="month-content tab-content" style="display: {month_display_style};">
                     <div style="overflow-x: auto;">
                         <table id="table-{account_id}-{month_id}" class="sortable-table">
                             <thead>
@@ -1117,11 +1117,11 @@ class AWSCostExtractor:
                 </div>
                 
                 <div class="tabs account-view-tabs">
-                    <div class="tab active" onclick="showAccountViewTab('{account_id}', 'resumo')">Resumo</div>
-                    <div class="tab" onclick="showAccountViewTab('{account_id}', 'mensal')">Detalhes por Mês</div>
+                    <div class="tab active" data-account-view="{account_id}-resumo">Resumo</div>
+                    <div class="tab" data-account-view="{account_id}-mensal">Detalhes por Mês</div>
                 </div>
                 
-                <div id="account-resumo-{account_id}" class="account-view-content" style="display: block;">
+                <div id="{account_id}-resumo" class="account-view-content tab-content active" style="display: block;">
                     <div style="overflow-x: auto;">
                         <table id="resumo-table-{account_id}" class="sortable-table">
                             <thead>
@@ -1136,8 +1136,8 @@ class AWSCostExtractor:
                     </div>
                 </div>
                 
-                <div id="account-mensal-{account_id}" class="account-view-content" style="display: none;">
-                    <div class="month-tabs">
+                <div id="{account_id}-mensal" class="account-view-content tab-content" style="display: none;">
+                    <div class="month-tabs tabs">
                         {account_month_tabs_html}
                     </div>
                     {account_month_contents_html}
@@ -1281,8 +1281,6 @@ class AWSCostExtractor:
             }}
             .service-legend {{
                 margin-bottom: 20px;
-                display: flex;
-                flex-wrap: wrap;
             }}
             .service-item {{
                 margin-right: 20px;
@@ -1353,10 +1351,10 @@ class AWSCostExtractor:
                 <p>Total de Contas Analisadas: {len(summary_df_list)}</p>
             </div>
             
-            <div class="tabs">
-                <div class="tab active" onclick="showTab('contas')">Por Conta</div>
-                <div class="tab" onclick="showTab('resumo')">Resumo Geral</div>
-                <div class="tab" onclick="showTab('todos-meses')">Todos os Meses</div>
+            <div class="tabs main-tabs">
+                <div class="tab active" data-tab="contas">Por Conta</div>
+                <div class="tab" data-tab="resumo">Resumo Geral</div>
+                <div class="tab" data-tab="todos-meses">Todos os Meses</div>
             </div>
             
             <div id="contas" class="tab-content active">
@@ -1403,202 +1401,175 @@ class AWSCostExtractor:
         </div>
         
         <script>
-            // Variáveis globais para rastrear estado
-            var activeMainTab = 'contas';
-            var activeAccountId = '{summary_df_list[0]["account_id"] if summary_df_list else ""}';
-            var activeAccountViewTab = {{}};  // Para cada conta, qual visualização está ativa (resumo/mensal)
-            var activeMonthTab = {{}};  // Para cada conta, qual mês está ativo
-            
-            // Inicializar estado
+            // Ensure DOM is fully loaded before running any JavaScript
             document.addEventListener('DOMContentLoaded', function() {{
-                // Inicializar estados para cada conta
-                const accountContents = document.querySelectorAll('.account-content');
-                for (let i = 0; i < accountContents.length; i++) {{
-                    const accountId = accountContents[i].id.replace('account-', '');
-                    activeAccountViewTab[accountId] = 'resumo';
-                    
-                    // Encontrar o primeiro mês para cada conta
-                    const monthTabs = document.querySelectorAll('.month-tab[id^="tab-' + accountId + '"]');
-                    if (monthTabs.length > 0) {{
-                        const firstMonthId = monthTabs[0].id.split('-').slice(2).join('-');
-                        activeMonthTab[accountId] = firstMonthId;
-                    }}
-                }}
+                // Handle main tabs (Por Conta, Resumo Geral, Todos os Meses)
+                const mainTabs = document.querySelectorAll('.main-tabs .tab');
+                mainTabs.forEach(tab => {{
+                    tab.addEventListener('click', function() {{
+                        // Get the tab ID
+                        const tabId = this.getAttribute('data-tab');
+                        
+                        // Hide all main tab content
+                        document.querySelectorAll('.tab-content').forEach(content => {{
+                            if (content.parentElement.classList.contains('account-content') || 
+                                content.parentElement.classList.contains('account-view-content')) {{
+                                // Skip nested tab-contents
+                                return;
+                            }}
+                            content.classList.remove('active');
+                            content.style.display = 'none';
+                        }});
+                        
+                        // Remove active class from all main tabs
+                        mainTabs.forEach(t => {{
+                            t.classList.remove('active');
+                        }});
+                        
+                        // Show the selected tab content
+                        const selectedContent = document.getElementById(tabId);
+                        if (selectedContent) {{
+                            selectedContent.classList.add('active');
+                            selectedContent.style.display = 'block';
+                        }}
+                        
+                        // Add active class to the clicked tab
+                        this.classList.add('active');
+                    }});
+                }});
                 
-                // Destacar células com percentuais altos
+                // Handle account tabs
+                const accountTabs = document.querySelectorAll('.account-tab');
+                accountTabs.forEach(tab => {{
+                    tab.addEventListener('click', function() {{
+                        // Get the account ID
+                        const accountId = this.getAttribute('data-account');
+                        
+                        // Hide all account content
+                        document.querySelectorAll('.account-content').forEach(content => {{
+                            content.style.display = 'none';
+                        }});
+                        
+                        // Remove active class from all account tabs
+                        accountTabs.forEach(t => {{
+                            t.classList.remove('active');
+                        }});
+                        
+                        // Show the selected account content
+                        const selectedAccount = document.getElementById('account-' + accountId);
+                        if (selectedAccount) {{
+                            selectedAccount.style.display = 'block';
+                        }}
+                        
+                        // Add active class to the clicked tab
+                        this.classList.add('active');
+                    }});
+                }});
+                
+                // Handle account view tabs (Resumo, Detalhes por Mês)
+                document.querySelectorAll('.account-view-tabs .tab').forEach(tab => {{
+                    tab.addEventListener('click', function() {{
+                        // Get the account view ID
+                        const viewId = this.getAttribute('data-account-view');
+                        
+                        // Get the parent account element
+                        const accountEl = this.closest('.account-content');
+                        
+                        // Hide all account view content within this account
+                        accountEl.querySelectorAll('.account-view-content').forEach(content => {{
+                            content.classList.remove('active');
+                            content.style.display = 'none';
+                        }});
+                        
+                        // Remove active class from all account view tabs within this account
+                        accountEl.querySelectorAll('.account-view-tabs .tab').forEach(t => {{
+                            t.classList.remove('active');
+                        }});
+                        
+                        // Show the selected account view content
+                        const selectedView = document.getElementById(viewId);
+                        if (selectedView) {{
+                            selectedView.classList.add('active');
+                            selectedView.style.display = 'block';
+                        }}
+                        
+                        // Add active class to the clicked tab
+                        this.classList.add('active');
+                    }});
+                }});
+                
+                // Handle month tabs
+                document.querySelectorAll('.month-tab').forEach(tab => {{
+                    tab.addEventListener('click', function() {{
+                        // Get the month ID
+                        const monthId = this.getAttribute('data-month');
+                        
+                        // Get the parent account view element
+                        const accountViewEl = this.closest('.account-view-content');
+                        
+                        // Hide all month content within this account view
+                        accountViewEl.querySelectorAll('.month-content').forEach(content => {{
+                            content.classList.remove('active');
+                            content.style.display = 'none';
+                        }});
+                        
+                        // Remove active class from all month tabs within this account view
+                        accountViewEl.querySelectorAll('.month-tab').forEach(t => {{
+                            t.classList.remove('active');
+                        }});
+                        
+                        // Show the selected month content
+                        const selectedMonth = document.getElementById(monthId);
+                        if (selectedMonth) {{
+                            selectedMonth.classList.add('active');
+                            selectedMonth.style.display = 'block';
+                        }}
+                        
+                        // Add active class to the clicked tab
+                        this.classList.add('active');
+                    }});
+                }});
+                
+                // Initialize table sorting functionality
+                initTableSorting();
+                
+                // Initialize high percentage highlighting
                 highlightHighPercentages();
-                
-                // Inicializar a funcionalidade de ordenação para todas as tabelas
-                initSortableTables();
             }});
             
-            function showTab(tabId) {{
-                // Esconder todas as abas
-                var contents = document.getElementsByClassName('tab-content');
-                for (var i = 0; i < contents.length; i++) {{
-                    contents[i].classList.remove('active');
-                    contents[i].style.display = 'none';
-                }}
-
-                // Remover classe ativa de todas as abas
-                var tabs = document.querySelectorAll('.tabs .tab');
-                for (var i = 0; i < tabs.length; i++) {{
-                    tabs[i].classList.remove('active');
-                }}
-
-                // Exibir a aba selecionada
-                var selectedContent = document.getElementById(tabId);
-                if (selectedContent) {{
-                    selectedContent.classList.add('active');
-                    selectedContent.style.display = 'block';
-                }}
-
-                // Destacar a aba ativa
-                var activeTab = document.querySelector(`.tabs .tab[onclick="showTab('${{tabId}}')"]`);
-                if (activeTab) {{
-                    activeTab.classList.add('active');
-                }}
-            }}
-
-            
-            function showAccountTab(accountId) {{
-                // Esconder todas as abas de contas
-                var accountContents = document.getElementsByClassName('account-content');
-                for (var i = 0; i < accountContents.length; i++) {{
-                    accountContents[i].style.display = 'none';
-                }}
-
-                // Remover classe ativa de todas as abas de conta
-                var accountTabs = document.getElementsByClassName('account-tab');
-                for (var i = 0; i < accountTabs.length; i++) {{
-                    accountTabs[i].classList.remove('active');
-                }}
-
-                // Exibir a conta selecionada
-                var selectedAccount = document.getElementById('account-' + accountId);
-                if (selectedAccount) {{
-                    selectedAccount.style.display = 'block';
-                }}
-
-                // Destacar a aba ativa
-                var activeTab = document.getElementById('tab-account-' + accountId);
-                if (activeTab) {{
-                    activeTab.classList.add('active');
-                }}
-            }}
-
-            
-            function showAccountViewTab(accountId, viewTabId) {{
-                // Ocultar todos os conteúdos de visualização
-                var viewContents = document.getElementById('account-' + accountId).querySelectorAll('.account-view-content');
-                for (var i = 0; i < viewContents.length; i++) {{
-                    viewContents[i].style.display = 'none';
-                }}
-                
-                // Atualizar abas de visualização
-                var viewTabs = document.getElementById('account-' + accountId).querySelectorAll('.account-view-tabs .tab');
-                for (var i = 0; i < viewTabs.length; i++) {{
-                    viewTabs[i].classList.remove('active');
-                }}
-                
-                // Mostrar conteúdo da visualização selecionada
-                document.getElementById('account-' + viewTabId + '-' + accountId).style.display = 'block';
-                
-                // Atualizar aba ativa (clicar no segundo filho da account-view-tabs)
-                event.currentTarget.classList.add('active');
-                
-                // Atualizar estado global
-                activeAccountViewTab[accountId] = viewTabId;
-            }}
-            
-            function showAccountMonthTab(accountId, monthId) {{
-                // Esconder todas as abas de mês para esta conta
-                var monthContents = document.querySelectorAll(`#account-${{accountId}} .month-content`);
-                for (var i = 0; i < monthContents.length; i++) {{
-                    monthContents[i].style.display = 'none';
-                }}
-
-                // Remover classe ativa de todas as abas de mês
-                var monthTabs = document.querySelectorAll(`#account-${{accountId}} .month-tab`);
-                for (var i = 0; i < monthTabs.length; i++) {{
-                    monthTabs[i].classList.remove('active');
-                }}
-
-                // Exibir o mês selecionado
-                var selectedMonth = document.getElementById(`month-${{accountId}}-${{monthId}}`);
-                if (selectedMonth) {{
-                    selectedMonth.style.display = 'block';
-                }}
-
-                // Destacar a aba ativa
-                var activeTab = document.getElementById(`tab-${{accountId}}-${{monthId}}`);
-                if (activeTab) {{
-                    activeTab.classList.add('active');
-                }}
-            }}
-
-            
+            // Função para filtrar tabelas
             function filterTable(tableId, inputId) {{
-                var input, filter, table, tr, td, i, j, txtValue, found;
-                input = document.getElementById(inputId);
-                filter = input.value.toUpperCase();
-                table = document.getElementById(tableId);
-                tr = table.getElementsByTagName("tr");
+                const input = document.getElementById(inputId);
+                const filter = input.value.toUpperCase();
+                const table = document.getElementById(tableId);
+                const rows = table.getElementsByTagName('tr');
                 
-                for (i = 1; i < tr.length; i++) {{
-                    found = false;
-                    td = tr[i].getElementsByTagName("td");
+                for (let i = 1; i < rows.length; i++) {{
+                    let found = false;
+                    const cells = rows[i].getElementsByTagName('td');
                     
-                    for (j = 0; j < 3; j++) {{
-                        if (td[j]) {{
-                            txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
+                    for (let j = 0; j < Math.min(3, cells.length); j++) {{
+                        if (cells[j]) {{
+                            const text = cells[j].textContent || cells[j].innerText;
+                            if (text.toUpperCase().indexOf(filter) > -1) {{
                                 found = true;
                                 break;
                             }}
                         }}
                     }}
                     
-                    if (found) {{
-                        tr[i].style.display = "";
-                    }} else {{
-                        tr[i].style.display = "none";
-                    }}
+                    rows[i].style.display = found ? '' : 'none';
                 }}
             }}
             
+            // Função para filtrar tabelas específicas de conta
             function filterAccountTable(accountId) {{
                 const tableId = 'resumo-table-' + accountId;
                 const inputId = 'search-account-' + accountId;
-                
-                var input, filter, table, tr, td, i, j, txtValue, found;
-                input = document.getElementById(inputId);
-                filter = input.value.toUpperCase();
-                table = document.getElementById(tableId);
-                tr = table.getElementsByTagName("tr");
-                
-                for (i = 1; i < tr.length; i++) {{
-                    found = false;
-                    td = tr[i].getElementsByTagName("td");
-                    
-                    for (j = 0; j < td.length; j++) {{
-                        if (td[j]) {{
-                            txtValue = td[j].textContent || td[j].innerText;
-                            if (txtValue.toUpperCase().indexOf(filter) > -1) {{
-                                found = true;
-                                break;
-                            }}
-                        }}
-                    }}
-                    
-                    if (found) {{
-                        tr[i].style.display = "";
-                    }} else {{
-                        tr[i].style.display = "none";
-                    }}
-                }}
+                filterTable(tableId, inputId);
             }}
             
+            // Função para destacar percentuais altos
             function highlightHighPercentages() {{
                 const tables = document.querySelectorAll('table');
                 tables.forEach(table => {{
@@ -1613,8 +1584,9 @@ class AWSCostExtractor:
                             
                             const rows = table.querySelectorAll('tbody tr');
                             for (let j = 0; j < rows.length; j++) {{
-                                const cell = rows[j].querySelectorAll('td')[colIndex];
-                                if (cell) {{
+                                const cells = rows[j].querySelectorAll('td');
+                                if (cells.length > colIndex) {{
+                                    const cell = cells[colIndex];
                                     const percentText = cell.textContent.trim();
                                     const percentValue = parseFloat(percentText);
                                     if (!isNaN(percentValue) && percentValue > 10) {{
@@ -1627,11 +1599,11 @@ class AWSCostExtractor:
                 }});
             }}
             
-            // Função para inicializar a ordenação em todas as tabelas
-            function initSortableTables() {{
-                const sortableTables = document.querySelectorAll('.sortable-table');
+            // Função para inicializar ordenação de tabelas
+            function initTableSorting() {{
+                const tables = document.querySelectorAll('.sortable-table');
                 
-                sortableTables.forEach(table => {{
+                tables.forEach(table => {{
                     const headers = table.querySelectorAll('th.sortable');
                     
                     headers.forEach((header, index) => {{
@@ -1644,14 +1616,15 @@ class AWSCostExtractor:
             
             // Função para ordenar uma tabela
             function sortTable(table, colIndex, header) {{
-                const rows = Array.from(table.querySelectorAll('tbody tr'));
-                const thead = table.querySelector('thead');
-                const headers = thead.querySelectorAll('th');
+                const tbody = table.querySelector('tbody');
+                if (!tbody) return;
+                
+                const rows = Array.from(tbody.querySelectorAll('tr'));
                 const isAsc = header.classList.contains('sort-asc');
                 
                 // Remover classes de ordenação de todos os cabeçalhos
-                headers.forEach(h => {{
-                    h.classList.remove('sort-asc', 'sort-desc');
+                table.querySelectorAll('th').forEach(th => {{
+                    th.classList.remove('sort-asc', 'sort-desc');
                 }});
                 
                 // Adicionar classe de ordenação ao cabeçalho atual
@@ -1659,34 +1632,35 @@ class AWSCostExtractor:
                 
                 // Ordenar as linhas
                 rows.sort((a, b) => {{
-                    const cellA = a.querySelectorAll('td')[colIndex].textContent.trim();
-                    const cellB = b.querySelectorAll('td')[colIndex].textContent.trim();
+                    const cellA = a.querySelectorAll('td')[colIndex];
+                    const cellB = b.querySelectorAll('td')[colIndex];
                     
-                    // Verificar se a célula contém um valor monetário (começa com $)
-                    if (cellA.startsWith('$') && cellB.startsWith('$')) {{
-                        // Remover $ e vírgulas, depois converter para número
-                        const numA = parseFloat(cellA.replace(/[$,]/g, ''));
-                        const numB = parseFloat(cellB.replace(/[$,]/g, ''));
+                    if (!cellA || !cellB) return 0;
+                    
+                    const valueA = cellA.textContent.trim();
+                    const valueB = cellB.textContent.trim();
+                    
+                    // Lidar com valores monetários
+                    if (valueA.startsWith(') && valueB.startsWith(')) {{
+                        const numA = parseFloat(valueA.replace(/[$,]/g, ''));
+                        const numB = parseFloat(valueB.replace(/[$,]/g, ''));
+                        return isAsc ? numB - numA : numA - numB;
+                    }} 
+                    // Lidar com valores percentuais
+                    else if (valueA.endsWith('%') && valueB.endsWith('%')) {{
+                        const numA = parseFloat(valueA);
+                        const numB = parseFloat(valueB);
                         return isAsc ? numB - numA : numA - numB;
                     }}
-                    // Verificar se a célula contém uma porcentagem
-                    else if (cellA.endsWith('%') && cellB.endsWith('%')) {{
-                        const numA = parseFloat(cellA);
-                        const numB = parseFloat(cellB);
-                        return isAsc ? numB - numA : numA - numB;
-                    }}
-                    // Ordenação padrão como texto
+                    // Comparação padrão de strings
                     else {{
-                        return isAsc ? 
-                            cellB.localeCompare(cellA, undefined, {{numeric: true, sensitivity: 'base'}}) :
-                            cellA.localeCompare(cellB, undefined, {{numeric: true, sensitivity: 'base'}}));
+                        return isAsc 
+                            ? valueB.localeCompare(valueA, undefined, {{numeric: true, sensitivity: 'base'}})
+                            : valueA.localeCompare(valueB, undefined, {{numeric: true, sensitivity: 'base'}});
                     }}
                 }});
                 
-                // Reconstruir a tabela com linhas ordenadas
-                const tbody = table.querySelector('tbody');
-                tbody.innerHTML = '';
-                
+                // Reapender linhas na nova ordem
                 rows.forEach(row => {{
                     tbody.appendChild(row);
                 }});
